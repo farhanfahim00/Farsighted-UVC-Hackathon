@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Main-goal submission",
+  "description": "The engineering requirements a component must fulfil, each citing the UN Regulation (and page) it comes from.",
+  "type": "object",
+  "required": [
+    "team_id",
+    "case_id",
+    "requirements"
+  ],
+  "properties": {
+    "team_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requirements": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "$ref": "#/$defs/requirement"
+      }
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "required": [
+        "id",
+        "text",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 2000
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "regulation",
+            "version",
+            "page"
+          ],
+          "properties": {
+            "regulation": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "page": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "paragraph": {
+              "type": "string"
+            }
+          }
+        },
+        "test_case": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

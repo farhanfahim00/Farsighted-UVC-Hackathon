@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sub-goal submission",
+  "description": "Which requirements derived from an older version of a UN Regulation must change, and why.",
+  "type": "object",
+  "required": [
+    "team_id",
+    "case_id",
+    "changes"
+  ],
+  "properties": {
+    "team_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "changes": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    }
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "required": [
+        "change",
+        "reason"
+      ],
+      "properties": {
+        "change": {
+          "enum": [
+            "modified",
+            "removed",
+            "added"
+          ]
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "\\S",
+          "maxLength": 2000
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "page"
+          ],
+          "properties": {
+            "page": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "paragraph": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "added"
+              }
+            },
+            "required": [
+              "change"
+            ]
+          },
+          "then": {
+            "properties": {
+              "requirement_id": {
+                "type": "null"
+              },
+              "new_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "new_text"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "modified"
+              }
+            },
+            "required": [
+              "change"
+            ]
+          },
+          "then": {
+            "properties": {
+              "requirement_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "new_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "requirement_id",
+              "new_text"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "change": {
+                "const": "removed"
+              }
+            },
+            "required": [
+              "change"
+            ]
+          },
+          "then": {
+            "properties": {
+              "requirement_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "requirement_id"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
