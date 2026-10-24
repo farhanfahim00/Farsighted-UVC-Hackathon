@@ -2,3 +2,5 @@
 regulations/pdf/
 __pycache__/
 .DS_Store
+subgoal/**/*.pdf
+build/
