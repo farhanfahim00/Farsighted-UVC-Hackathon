@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Run stages 2-6 for one case folder: profile, scope screening (3, then 3b overlap), section selection,
-extraction, export.
+extraction, faithfulness check, export.
 
     python src/run_case.py cases/dev-rear-lamp            # skips a stage whose output already exists
     python src/run_case.py cases/dev-rear-lamp --force    # redo both (API responses still come from build/cache/)
 
 Outputs (case_id = the folder name), in build/cases/<case_id>/: profile.json, regulations.json, overlap.json, sections.json,
-candidates.jsonl, extracted.jsonl, submission.json (validated with tools/validate.py).
+candidates.jsonl, extracted.jsonl, faithfulness.jsonl, submission.json (validated with tools/validate.py).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from screen_regulations import screen_case
 from select_sections import print_counts, select_case
 from extract import extract_case, summarize
 from export import export_case
+from faithfulness import check_case
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
             summarize(extract_case(case_dir.name))
         else:
             print("[stage 5] skipped (extracted.jsonl exists; use --force)")
+        if config.FAITHFULNESS_CHECK and (args.force or not (out_dir / "faithfulness.jsonl").is_file()):
+            print("[stage 5b] faithfulness check")
+            res = check_case(case_dir.name)
+            print(f"  checked {len(res['results'])} requirements, changed {sum(x['changed'] for x in res['results'])}")
+        elif config.FAITHFULNESS_CHECK:
+            print("[stage 5b] skipped (faithfulness.jsonl exists; use --force)")
         if args.force or not (out_dir / "submission.json").is_file():
             print("[stage 6] export")
             export_case(case_dir.name)

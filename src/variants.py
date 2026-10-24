@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results = {}
     for name, sw in VARIANTS.items():
-        sub, stats = make_submission(case_id, drop_overlap=True, drop_categories=config.DROP_CATEGORIES, **sw)
+        sub, stats = make_submission(case_id, drop_overlap=True, drop_categories=config.DROP_CATEGORIES, faithfulness=False, **sw)
         path = out_dir / f"submission_{name}.json"
         path.write_text(json.dumps(sub, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         check = run_tool("validate.py", str(path))

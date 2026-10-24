@@ -144,6 +144,112 @@ def choose_sections(profile: dict, decision: dict, records: list[dict]) -> dict:
     return result
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Second level: sub-sections of the kept sections and annexes
+# ---------------------------------------------------------------------------------------------------------------------
+
+SUB_SCHEMA = SELECT_SCHEMA            # same shape: [{id, relevant, reason}]
+MIN_TITLED_SUBS = 2                   # a unit is asked about only when at least this many sub-sections have titles
+
+
+def in_subsection(r: dict, sub: dict) -> bool:
+    """r lies inside sub-section sub = {"record_id", "id" (the label)}: it is the sub-section, or its parent chain / label says so."""
+    label = sub["id"]
+    return (r["id"] == sub["record_id"] or sub["record_id"] in (r.get("parent_chain") or [])
+            or r["paragraph"] == label or r["paragraph"].startswith(label + ".") or r["paragraph"].startswith(label + " "))
+
+
+def build_subsections(records: list[dict], kept_units: set[str]) -> list[dict]:
+    """[{unit, title, subs: [{id (label), title, paragraphs, record_id}]}] for the kept units whose direct sub-sections
+    have titles: main-body "6.2" with a title, annex parts / appendices / numbered sections with a title."""
+    units: dict[str, dict] = {}
+    for r in records:
+        u = unit_of(r)
+        if u not in kept_units:
+            continue
+        e = units.setdefault(u, {"unit": u, "title": "", "subs": []})
+        if r["annex"]:
+            if r["kind"] == "title" and r["paragraph"] != u and r["title"] and r["parent_status"] in ("ok", "root"):
+                if r["parent"] in (None, "", u) or r["parent"] == u:
+                    e["subs"].append({"id": r["paragraph"], "title": r["title"], "record_id": r["id"], "paragraphs": 0})
+        elif r["kind"] == "paragraph" and r["title"] and not r["appendix"] and r["number"].count(".") == 1 \
+                and r["number"].split(".")[0] == u.split()[-1]:
+            e["subs"].append({"id": r["paragraph"], "title": r["title"], "record_id": r["id"], "paragraphs": 0})
+        elif r["kind"] == "paragraph" and r["number"] == u.split()[-1]:
+            e["title"] = snippet(r, 100)
+    out = []
+    for e in units.values():
+        if len(e["subs"]) < MIN_TITLED_SUBS:
+            continue
+        for sub in e["subs"]:
+            sub["paragraphs"] = sum(1 for r in records if is_candidate(r) and unit_of(r) == e["unit"] and in_subsection(r, sub))
+        out.append(e)
+    return out
+
+
+def subsection_content(profile: dict, decision: dict, outline: list[dict], lists_complete: bool) -> list[dict]:
+    shown = [{"unit": e["unit"], "title": e["title"],
+              "sub_sections": [{"id": s["id"], "title": s["title"], "paragraphs": s["paragraphs"]} for s in e["subs"]]}
+             for e in outline]
+    text = (f"PRODUCT PROFILE (JSON)\n{json.dumps(profile, ensure_ascii=False)}\n\n"
+            f"REGULATION: {decision['regulation']}: {decision['title']}\n"
+            f"Judged to apply because: {decision['reason']}\n\n"
+            f"SPEC_LISTS_COMPLETE: {'true' if lists_complete else 'false'}\n\n"
+            f"SUB-SECTIONS (JSON), grouped by chosen section or annex:\n{json.dumps(shown, ensure_ascii=False)}\n\n"
+            "Decide, for every sub-section id, whether it can be dropped.")
+    return [{"type": "text", "text": text}]
+
+
+def choose_subsections(profile: dict, decision: dict, records: list[dict], kept_units: set[str],
+                       lists_complete: bool) -> dict:
+    """{"regulation", "subsections": {label: {unit, title, record_id, paragraphs, relevant, reason, source}}, "failure"}."""
+    outline = build_subsections(records, kept_units)
+    result = {"regulation": decision["regulation"], "subsections": {}, "failure": None}
+    if not outline:
+        return result
+    answers: dict[str, dict] = {}
+    try:
+        raw, _ = call_json(config.SCREEN_MODEL, "subsection_system.md",
+                           subsection_content(profile, decision, outline, lists_complete), SUB_SCHEMA,
+                           label=f"subsections:{decision['regulation']}:{lists_complete}", max_tokens=8000)
+        answers = {s["id"]: s for s in raw["sections"]}
+    except LLMFailure as exc:
+        result["failure"] = str(exc)
+    for e in outline:
+        for s in e["subs"]:
+            a = answers.get(s["id"])
+            base = {"unit": e["unit"], "title": s["title"], "record_id": s["record_id"], "paragraphs": s["paragraphs"]}
+            if a is None:     # recall first
+                result["subsections"][s["id"]] = {**base, "relevant": True, "source": "default_keep",
+                                                  "reason": f"no answer ({result['failure']})" if result["failure"] else "not answered; kept"}
+            else:
+                result["subsections"][s["id"]] = {**base, "relevant": a["relevant"] == "yes", "source": "model",
+                                                  "reason": " ".join(a["reason"].split())}
+    return result
+
+
+def select_subsections_case(case_id: str, out_dir: Path | None = None) -> dict:
+    """Second-level selection for both SPEC_LISTS_COMPLETE settings -> build/cases/<case_id>/subsections.json
+    {"spec_lists_complete_false": {regulation: {...}}, "spec_lists_complete_true": {...}}."""
+    from regulation_set import kept_regulations
+    out_dir = out_dir or config.CASES_BUILD / case_id
+    profile = json.loads((out_dir / "profile.json").read_text(encoding="utf-8"))
+    profile = {k: v for k, v in profile.items() if k != "meta"}
+    sections = json.loads((out_dir / "sections.json").read_text(encoding="utf-8"))
+    kept = set(kept_regulations(case_id))
+    decisions = [d for d in final_decisions(case_id) if d["applies"] and d["regulation"] in kept]
+    by_reg = load_base_records({d["regulation"] for d in decisions})
+    kept_units = {s["regulation"]: {u for u, v in s["sections"].items() if v["relevant"]} for s in sections["regulations"]}
+    result = {}
+    for flag in (False, True):
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            chosen = list(pool.map(lambda d: choose_subsections(profile, d, by_reg[d["regulation"]],
+                                                                kept_units.get(d["regulation"], set()), flag), decisions))
+        result[f"spec_lists_complete_{str(flag).lower()}"] = {c["regulation"]: c for c in chosen}
+    (out_dir / "subsections.json").write_text(json.dumps(result, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return result
+
+
 def select_case(case_id: str, out_dir: Path | None = None) -> dict:
     out_dir = out_dir or config.CASES_BUILD / case_id
     profile = json.loads((out_dir / "profile.json").read_text(encoding="utf-8"))
@@ -182,7 +288,17 @@ def select_case(case_id: str, out_dir: Path | None = None) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("case_dir")
+    ap.add_argument("--subsections", action="store_true", help="second level only: sub-sections of the kept sections "
+                    "(both SPEC_LISTS_COMPLETE settings -> subsections.json); sections.json must already exist")
     args = ap.parse_args(argv)
+    if args.subsections:
+        try:
+            res = select_subsections_case(Path(args.case_dir).name)
+        except (OSError, LLMFailure) as exc:
+            print(f"error: sub-section selection failed: {exc}", file=sys.stderr)
+            return 1
+        print(usage_summary())
+        return 0
     try:
         res = select_case(Path(args.case_dir).name)
     except (OSError, LLMFailure) as exc:

@@ -30,8 +30,9 @@ from collections import Counter
 from pathlib import Path
 
 import config
+from faithfulness import load_corrections
 from regulation_set import kept_regulations
-from select_sections import load_base_records
+from select_sections import in_subsection, load_base_records
 
 CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
@@ -46,14 +47,40 @@ def clip(text: str) -> str:
     return text[:MAX_TEXT - 1].rsplit(" ", 1)[0] + "…"
 
 
+def load_deselected(case_id: str, spec_lists_complete: bool) -> dict[str, list[dict]]:
+    """{regulation: [sub-section {id, record_id, ...}]} that subsections.json deselects for the given setting."""
+    path = config.CASES_BUILD / case_id / "subsections.json"
+    data = json.loads(path.read_text(encoding="utf-8"))[f"spec_lists_complete_{str(spec_lists_complete).lower()}"]
+    return {reg: [{"id": i, **s} for i, s in c["subsections"].items() if not s["relevant"]] for reg, c in data.items()}
+
+
+def load_review(case_id: str) -> dict[tuple[str, int], int]:
+    """{(paragraph id, requirement index): probability 0-100} from review_medium.jsonl."""
+    path = config.CASES_BUILD / case_id / "review_medium.jsonl"
+    out = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line:
+            r = json.loads(line)
+            out[(r["id"], r["index"])] = r["probability"]
+    return out
+
+
 def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, exclude: set[str] = frozenset(), *,
                      keep: set[str] | None = None, min_confidence: str = "low",
                      drop_categories: set[str] = frozenset(),
-                     drop_unless_high: set[str] = frozenset()) -> tuple[dict, dict]:
+                     drop_unless_high: set[str] = frozenset(),
+                     corrections: dict[tuple[str, int], str] | None = None,
+                     deselected: dict[str, list[dict]] | None = None,
+                     review: dict[tuple[str, int], int] | None = None, review_below: int = 0,
+                     trace: list | None = None) -> tuple[dict, dict]:
     """(submission dict, stats). rows are extracted.jsonl lines; records maps paragraph id -> index record.
+    corrections: {(paragraph id, requirement index): corrected text} from faithfulness.py, replacing the extracted text.
     keep: only these regulations (None = all). Paragraphs below min_confidence, in drop_categories, or in
     drop_unless_high (without high confidence) are left out;
-    a row without confidence or category (older extraction) is never filtered."""
+    a row without confidence or category (older extraction) is never filtered.
+    deselected: sub-sections (select_sections.in_subsection) whose requirements are left out.
+    review: {(paragraph id, index): probability}; a reviewed requirement below review_below is left out.
+    trace: if a list, gets (paragraph id, requirement index, exported text, confidence) for every requirement kept."""
     stats = Counter()
     reqs, seen = [], set()
     floor = CONFIDENCE_RANK[min_confidence]
@@ -68,12 +95,23 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
             stats["left_out_by_category"] += len(row["requirements"])
             continue
         rec = records[row["id"]]
-        for text in row["requirements"]:
+        if deselected and any(in_subsection(rec, sub) for sub in deselected.get(row["regulation"], ())):
+            stats["left_out_by_subsection"] += len(row["requirements"])
+            continue
+        for i, text in enumerate(row["requirements"]):
+            if corrections and (row["id"], i) in corrections:
+                stats["faithfulness_corrected"] += 1
+                text = corrections[(row["id"], i)]
+            if review and review.get((row["id"], i), 100) < review_below:
+                stats["left_out_by_review"] += 1
+                continue
             text = " ".join(text.split())
             if not text or (row["id"], text) in seen:
                 stats["duplicates_removed"] += bool(text)
                 continue
             seen.add((row["id"], text))
+            if trace is not None:
+                trace.append((row["id"], i, text, row.get("confidence")))
             if len(text) > MAX_TEXT:
                 stats["truncated"] += 1
                 text = clip(text)
@@ -88,18 +126,29 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
 def make_submission(case_id: str, *, exclude: list[str] | None = None, unknown_policy: str | None = None,
                     drop_overlap: bool | None = None, min_confidence: str | None = None,
                     drop_categories: set[str] | None = None,
-                    drop_unless_high: set[str] | None = None) -> tuple[dict, dict]:
-    """The submission for a case under the given switches (None = the value in config.py). No API calls."""
+                    drop_unless_high: set[str] | None = None,
+                    faithfulness: bool | None = None, subsection_filter: bool | None = None,
+                    spec_lists_complete: bool | None = None, review_medium: bool | None = None,
+                    trace: list | None = None) -> tuple[dict, dict]:
+    """The submission for a case under the given switches (None = the value in config.py). No API calls.
+    faithfulness: use the corrected texts of faithfulness.jsonl (default config.FAITHFULNESS_CHECK)."""
     out_dir = config.CASES_BUILD / case_id
     rows = [json.loads(l) for l in (out_dir / "extracted.jsonl").read_text(encoding="utf-8").splitlines() if l]
     by_reg = load_base_records({r["regulation"] for r in rows})
     records = {r["id"]: r for recs in by_reg.values() for r in recs}
     keep = set(kept_regulations(case_id, unknown_policy=unknown_policy, drop_overlap=drop_overlap))
+    use_faithfulness = config.FAITHFULNESS_CHECK if faithfulness is None else faithfulness
+    corrections = load_corrections(case_id, rows) if use_faithfulness else None
+    complete = config.SPEC_LISTS_COMPLETE if spec_lists_complete is None else spec_lists_complete
+    deselected = (load_deselected(case_id, complete)
+                  if (config.SUBSECTION_FILTER if subsection_filter is None else subsection_filter) else None)
+    review = load_review(case_id) if (config.REVIEW_MEDIUM if review_medium is None else review_medium) else None
     return build_submission(rows, records, case_id, set(exclude or []), keep=keep,
                             min_confidence=min_confidence or config.MIN_CONFIDENCE,
                             drop_categories=config.DROP_CATEGORIES if drop_categories is None else drop_categories,
                             drop_unless_high=(config.DROP_CATEGORIES_UNLESS_HIGH if drop_unless_high is None
-                                              else drop_unless_high))
+                                              else drop_unless_high), corrections=corrections,
+                            deselected=deselected, review=review, review_below=config.REVIEW_DROP_BELOW, trace=trace)
 
 
 def run_tool(script: str, *args: str) -> subprocess.CompletedProcess:
@@ -143,10 +192,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--name", help="variant name (default: no_<regulations>)")
     ap.add_argument("--min-confidence", choices=list(CONFIDENCE_RANK), help="default: config.MIN_CONFIDENCE")
     ap.add_argument("--unknown-policy", choices=["include", "exclude"], help="default: config.UNKNOWN_POLICY")
+    ap.add_argument("--drop-unless-high", help="comma-separated categories left out unless confidence is high "
+                                               "(default: config.DROP_CATEGORIES_UNLESS_HIGH)")
+    ap.add_argument("--no-faithfulness", action="store_true", help="export the extracted texts, not the corrected ones")
     args = ap.parse_args(argv)
     try:
         export_case(Path(args.case_dir).name, args.exclude.split(",") if args.exclude else None, args.name,
-                    min_confidence=args.min_confidence, unknown_policy=args.unknown_policy)
+                    min_confidence=args.min_confidence, unknown_policy=args.unknown_policy,
+                    drop_unless_high=set(args.drop_unless_high.split(",")) if args.drop_unless_high else None,
+                    faithfulness=False if args.no_faithfulness else None)
     except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
