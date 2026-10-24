@@ -32,9 +32,9 @@ class IncompleteResponse(RuntimeError):
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, status, retry_after=0):
-        super().__init__(f'Claude HTTP {status}; provider error body omitted')
-        self.status, self.retry_after = status, retry_after
+    def __init__(self, status, retry_after=0, detail=''):
+        super().__init__(f'Claude HTTP {status}' + (': ' + detail[:300] if detail else '; provider error body omitted'))
+        self.status, self.retry_after, self.detail = status, retry_after, detail
 
 
 def load_key():
@@ -56,10 +56,21 @@ def transport(payload, timeout):
             return json.load(response)
     except urllib.error.HTTPError as exc:
         try:
+            body = exc.read().decode('utf-8', 'replace')
+        except Exception:
+            body = '<body unavailable>'
+        # Diagnostic only: prints the provider's own error text. No API key is
+        # printed. Safe to leave in place; it fires only on an HTTP error.
+        print('=== HTTP ' + str(exc.code) + ' ===', flush=True)
+        print(body[:1500], flush=True)
+        print('=== model: ' + str(payload.get('model')) +
+              ' | max_tokens: ' + str(payload.get('max_tokens')) +
+              ' | keys: ' + ', '.join(sorted(payload)) + ' ===', flush=True)
+        try:
             retry_after = min(30, max(0, float(exc.headers.get('retry-after', 0))))
         except (TypeError, ValueError):
             retry_after = 0
-        raise ProviderError(exc.code, retry_after) from None
+        raise ProviderError(exc.code, retry_after, body) from None
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, ConnectionRefusedError):
             raise NetworkUnavailable('Network connection refused before a response; check execution permissions/proxy') from None
@@ -144,7 +155,8 @@ class Client:
                         except (ProviderError, TimeoutError) as exc:
                             # Keep failed reservations: a timeout may have incurred a charge.
                             with self.lock:
-                                self.log({'event': 'failed', 'request_hash': key, 'type': type(exc).__name__})
+                                self.log({'event': 'failed', 'request_hash': key, 'type': type(exc).__name__,
+                                          'detail': getattr(exc, 'detail', '')[:500]})
                             retry = isinstance(exc, TimeoutError) or exc.status in (429, 500, 502, 503, 504, 529)
                             if not retry or attempt == 2:
                                 raise
