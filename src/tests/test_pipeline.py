@@ -13,7 +13,7 @@ def rec(label, **kw):
     base = {"id": f"UN R1|1|base|f.pdf|{label}#1", "regulation": "UN R1", "version": "1", "role": "base", "page": 3,
             "paragraph": label, "number": label, "kind": "paragraph", "section": None, "annex": None, "appendix": None,
             "part": None, "title": None, "text": f"text of {label}", "has_obligation": True, "annex_kind": None,
-            "breadcrumb": [], "parent_id": None, "table_ids": [], "obligation_signals": {"shall": 1},
+            "breadcrumb": [], "parent_id": None, "children_ids": [], "table_ids": [], "obligation_signals": {"shall": 1},
             "condition_signals": [], "heading_value_item": False, "inherits_obligation": False,
             "inherits_obligation_reason": None}
     base.update(kw)
@@ -40,9 +40,9 @@ def test_outline_counts_titles_and_skips_forms():
     assert by["Annex 2"]["title"] == "Test method" and by["Annex 2"]["annex_kind"] == "content"
 
 
-def test_candidates_are_paragraphs_and_titles_with_text_not_tables():
+def test_candidates_are_paragraphs_table_entries_and_titles_with_text():
     assert ss.is_candidate(rec("5.1"))
-    assert not ss.is_candidate(rec("5.1. Table 3", kind="table"))
+    assert ss.is_candidate(rec("5.1. Table 3", kind="table"))          # labelled as in the index, carries the cells
     assert not ss.is_candidate(rec("Annex 1", kind="title", title="Comm", text="Annex 1 Comm"))
     assert ss.is_candidate(rec("Annex 2", kind="title", title="Test", text="Annex 2 Test " + "lead-in text " * 10))
 
@@ -138,3 +138,37 @@ def test_export_exclude_renumbers_and_clips_long_text():
     long_rows = [{"id": "A", "regulation": "UN R1", "reason": "", "requirements": ["word " * 600]}]
     sub, stats = export.build_submission(long_rows, RECORDS, "case-x")
     assert len(sub["requirements"][0]["text"]) <= export.MAX_TEXT and stats["truncated"] == 1
+
+
+def test_table_entry_gets_the_cells_and_its_owner_does_not():
+    table = rec("5.1. Table 3", id="T", kind="table", table_ids=["TB"], parent_id="P", text="Table 3 Values")
+    owner = rec("5.1", id="P", table_ids=["TB"], children_ids=["T"], text="The lamp shall meet Table 3.")
+    cells = {"TB": {"caption": "Table 3", "cells": [["a", "1"]]}}
+    by_id = {"P": owner, "T": table}
+    t, o = extract.payload(table, "p2", by_id, cells), extract.payload(owner, "p1", by_id, cells)
+    assert "table" in t and "Table 3" in t["table"] and t["parent_text"].startswith("The lamp shall")
+    assert "table" not in o and any("separate table paragraph" in h for h in o["hints"])
+
+
+def test_export_filters_by_confidence_category_and_kept_regulations():
+    rows = [{"id": "A", "regulation": "UN R1", "reason": "", "requirements": ["a."], "confidence": "high", "category": "device_requirement"},
+            {"id": "B", "regulation": "UN R1", "reason": "", "requirements": ["b."], "confidence": "medium", "category": "conformity_of_production"},
+            {"id": "C", "regulation": "UN R1", "reason": "", "requirements": ["c."], "confidence": "low", "category": "device_requirement"},
+            {"id": "D", "regulation": "UN R2", "reason": "", "requirements": ["d."], "confidence": "high", "category": "device_requirement"},
+            {"id": "E", "regulation": "UN R1", "reason": "", "requirements": ["e."]}]            # older row: never filtered
+    recs = {k: rec(k, id=k, regulation="UN R2" if k == "D" else "UN R1") for k in "ABCDE"}
+    texts = lambda **kw: [r["text"] for r in export.build_submission(rows, recs, "c", **kw)[0]["requirements"]]
+    assert texts() == ["a.", "b.", "c.", "d.", "e."]
+    assert texts(min_confidence="medium") == ["a.", "b.", "d.", "e."]
+    assert texts(min_confidence="high") == ["a.", "d.", "e."]
+    assert texts(drop_categories={"conformity_of_production"}) == ["a.", "c.", "d.", "e."]
+    assert texts(keep={"UN R2"}) == ["d."]
+
+
+def test_export_drop_unless_high_keeps_only_high_confidence_paragraphs_of_that_category():
+    rows = [{"id": "A", "regulation": "UN R1", "reason": "", "requirements": ["a."], "confidence": "high", "category": "conformity_of_production"},
+            {"id": "B", "regulation": "UN R1", "reason": "", "requirements": ["b."], "confidence": "medium", "category": "conformity_of_production"},
+            {"id": "C", "regulation": "UN R1", "reason": "", "requirements": ["c."], "confidence": "medium", "category": "device_requirement"}]
+    recs = {k: rec(k, id=k) for k in "ABC"}
+    sub, stats = export.build_submission(rows, recs, "c", drop_unless_high={"conformity_of_production"})
+    assert [r["text"] for r in sub["requirements"]] == ["a.", "c."] and stats["left_out_by_category"] == 1

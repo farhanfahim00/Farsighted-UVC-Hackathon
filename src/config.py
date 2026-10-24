@@ -19,3 +19,13 @@ SCREEN_MODEL = "claude-sonnet-5-5"     # stage 3: one call per regulation
 # What to do with a regulation whose decision rests only on uncertain facts
 # (unknown / representative / conflicting / observed_uncertain): "include" keeps it, "exclude" drops it.
 UNKNOWN_POLICY = "include"
+
+# ---- v2: precision controls (see src/export.py, src/overlap.py) -------------------------------------------------------
+DROP_OVERLAPPING = True                # after screening, drop an older regulation whose devices a newer one consolidates
+MIN_CONFIDENCE = "medium"              # export keeps paragraphs with confidence >= this (low < medium < high)
+# Extraction categories whose paragraphs are not exported. Decided by src/analyze_extras.py --rules on the dev case
+# (a rule is applied only if it removes at most 1 expected paragraph and at least 20 extras).
+DROP_CATEGORIES: set[str] = set()
+# Categories whose paragraphs are left out unless the model's confidence for them is high (rule "category = X and
+# confidence != high"; same selection method and thresholds as DROP_CATEGORIES).
+DROP_CATEGORIES_UNLESS_HIGH: set[str] = {"conformity_of_production"}

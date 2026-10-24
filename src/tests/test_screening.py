@@ -3,7 +3,7 @@ UNKNOWN_POLICY, supersession, ordering, and the LLM cache key."""
 
 from __future__ import annotations
 
-import profile as profile_mod            # src/profile.py (shadows the stdlib module on purpose, see conftest path)
+import product_profile as profile_mod            # src/product_profile.py
 import screen_regulations as sr
 import llm
 

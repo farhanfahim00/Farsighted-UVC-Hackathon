@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run stages 2-6 for one case folder: profile, scope screening, section selection, extraction, export.
+"""Run stages 2-6 for one case folder: profile, scope screening (3, then 3b overlap), section selection,
+extraction, export.
 
     python src/run_case.py cases/dev-rear-lamp            # skips a stage whose output already exists
     python src/run_case.py cases/dev-rear-lamp --force    # redo both (API responses still come from build/cache/)
 
-Outputs (case_id = the folder name), in build/cases/<case_id>/: profile.json, regulations.json, sections.json,
+Outputs (case_id = the folder name), in build/cases/<case_id>/: profile.json, regulations.json, overlap.json, sections.json,
 candidates.jsonl, extracted.jsonl, submission.json (validated with tools/validate.py).
 """
 
@@ -17,7 +18,8 @@ from pathlib import Path
 import config
 import llm
 from llm import LLMFailure
-from profile import build_profile
+from product_profile import build_profile
+from overlap import find_overlaps, print_result
 from screen_regulations import screen_case
 from select_sections import print_counts, select_case
 from extract import extract_case, summarize
@@ -47,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
                   f"{r['counts']['failures']} failed calls")
         else:
             print("[stage 3] skipped (regulations.json exists; use --force)")
+        if config.DROP_OVERLAPPING and (args.force or not (out_dir / "overlap.json").is_file()):
+            print("[stage 3b] overlapping regulations")
+            print_result(find_overlaps(case_dir.name))
+        elif config.DROP_OVERLAPPING:
+            print("[stage 3b] skipped (overlap.json exists; use --force)")
         if args.force or not (out_dir / "candidates.jsonl").is_file():
             print("[stage 4] section selection")
             print_counts(select_case(case_dir.name))

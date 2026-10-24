@@ -5,7 +5,7 @@ Candidates are all paragraphs of the selected sections; obligation signals are h
 
     python src/select_sections.py cases/dev-rear-lamp
 
-Input:  build/cases/<case_id>/profile.json, regulations.json, build/paragraphs.jsonl
+Input:  build/cases/<case_id>/profile.json, regulations.json (+ overlap.json), build/paragraphs.jsonl
 Output: build/cases/<case_id>/candidates.jsonl   one line per candidate paragraph (id, regulation, unit, hints)
         build/cases/<case_id>/sections.json      every section decision with its reason (also for dropped ones)
 
@@ -24,6 +24,7 @@ from pathlib import Path
 
 import config
 from llm import LLMFailure, call_json, object_schema, usage_summary
+from regulation_set import final_decisions
 
 WORKERS = 6
 FORM_SHARE = 0.8             # an annex is a form when this share of its records is a communication form
@@ -59,9 +60,9 @@ def unit_of(r: dict) -> str:
 
 
 def is_candidate(r: dict) -> bool:
-    """Numbered paragraphs, and title entries that carry text beyond their heading. Table entries are not candidates:
-    their cells travel with the paragraph that owns the table."""
-    if r["kind"] == "paragraph":
+    """Numbered paragraphs, table entries (labelled as in the index, e.g. "5.1.4.4.1. Table 3": they carry the table's
+    cells), and title entries that carry text beyond their heading."""
+    if r["kind"] in ("paragraph", "table"):
         return True
     return r["kind"] == "title" and len(r["text"]) > len(r["title"] or "") + 60
 
@@ -147,8 +148,7 @@ def select_case(case_id: str, out_dir: Path | None = None) -> dict:
     out_dir = out_dir or config.CASES_BUILD / case_id
     profile = json.loads((out_dir / "profile.json").read_text(encoding="utf-8"))
     profile = {k: v for k, v in profile.items() if k != "meta"}
-    decisions = [d for d in json.loads((out_dir / "regulations.json").read_text(encoding="utf-8"))["decisions"]
-                 if d["applies"]]
+    decisions = [d for d in final_decisions(case_id) if d["applies"]]     # after UNKNOWN_POLICY and overlap
     by_reg = load_base_records({d["regulation"] for d in decisions})
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         chosen = list(pool.map(lambda d: choose_sections(profile, d, by_reg[d["regulation"]]), decisions))

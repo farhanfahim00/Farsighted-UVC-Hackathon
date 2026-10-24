@@ -25,6 +25,15 @@ from score_local import _paragraph_key  # noqa: E402
 from select_sections import load_base_records, unit_of  # noqa: E402
 
 
+def paragraph_metrics(sub_reqs: list[dict], exp_reqs: list[dict]) -> dict:
+    """Paragraph-level recall and precision of a submission's requirements against the expected requirements."""
+    ours = {(r["source"]["regulation"], _paragraph_key(r["source"].get("paragraph"))) for r in sub_reqs}
+    gold = {(r["source"]["regulation"], _paragraph_key(r["source"].get("paragraph"))) for r in exp_reqs}
+    hit = ours & gold
+    return {"gold": len(gold), "ours": len(ours), "hit": len(hit),
+            "recall": len(hit) / len(gold) if gold else 0.0, "precision": len(hit) / len(ours) if ours else 0.0}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("submission", nargs="?", default=str(config.CASES_BUILD / "dev-rear-lamp" / "submission.json"))

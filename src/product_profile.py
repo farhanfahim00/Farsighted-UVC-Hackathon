@@ -2,7 +2,7 @@
 """Stage 2: product profile. Reads a case folder (every text file and every image) and asks PROFILE_MODEL for a
 structured, product-agnostic description of the product, with a status and evidence for every fact.
 
-    python src/profile.py cases/dev-rear-lamp [--force]     # -> build/cases/<case_id>/profile.json
+    python src/product_profile.py cases/dev-rear-lamp [--force]     # -> build/cases/<case_id>/profile.json
 
 The model gets, in one request: each text file as raw text (unchanged) and split by markdown headings, and each image.
 It never sees expected.json: any file whose name contains "expected" is skipped, so a case folder can be passed as is.
