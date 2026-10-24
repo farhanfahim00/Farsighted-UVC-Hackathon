@@ -69,8 +69,13 @@ REVIEW_ALL = False
 REVIEW_BORDERLINE_TWICE = False
 BORDERLINE_RANGE = (10, 40)
 
+# ---- v9: cost cuts for a big case ---------------------------------------------------------------------------------------
+PROMPT_CACHING = True                     # cache_control on the system prompt and the product profile (llm.py); no effect on answers
+SKIP_DESELECTED_BEFORE_EXTRACTION = False # extraction skips candidates inside sub-sections deselected for export (needs subsections.json)
+VEHICLE_CATEGORY_USE_PRIMARY = False      # category check uses the stated "vehicle category" fact, not categories named in remarks
+
 # ---- presets ---------------------------------------------------------------------------------------------------------
-# FARSIGHTED_PRESET=v5_a|v7_a|v7_b|v7_c|v8_a|v8_b python src/run_case.py ...   sets the switches above; unset = v7_c.
+# FARSIGHTED_PRESET=v5_a|v7_a|v7_b|v7_c|v8_a|v8_b python src/run_case.py ...   sets the switches above; unset = v8_b (v8_b_lean = v8_b + cost cuts).
 PRESETS = {
     "v5_a": {},
     "v7_a": {"REVIEW_INSTEAD_OF_CATEGORY_DROP": True},
@@ -78,8 +83,13 @@ PRESETS = {
     "v7_c": {"REVIEW_INSTEAD_OF_CATEGORY_DROP": True, "REVIEW_LOW_CONFIDENCE": True, "REVIEW_PROMPT": "criteria"},
     "v8_a": {"REVIEW_ALL": True, "REVIEW_PROMPT": "criteria"},
     "v8_b": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria"},
+    "v8_c": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria", "SPEC_LISTS_COMPLETE": True},
+    # v8_b with every cost cut: same exported requirements (faithfulness off: it did not change platform scores)
+    "v8_b_lean": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria",
+                  "SKIP_DESELECTED_BEFORE_EXTRACTION": True, "FAITHFULNESS_CHECK": False,
+                  "VEHICLE_CATEGORY_CHECK": True, "VEHICLE_CATEGORY_USE_PRIMARY": True},
 }
-PRESET = os.environ.get("FARSIGHTED_PRESET", "v7_c")        # the default preset
+PRESET = os.environ.get("FARSIGHTED_PRESET", "v8_b")        # the default preset
 if PRESET not in PRESETS:
     raise SystemExit(f"error: FARSIGHTED_PRESET={PRESET!r} is not one of {sorted(PRESETS)}")
 globals().update(PRESETS[PRESET])

@@ -204,6 +204,13 @@ def extract_case(case_id: str, out_dir: Path | None = None, only: set[str] | Non
     regs = {c["regulation"] for c in candidates}
     by_reg = load_base_records(regs)
     by_id = {r["id"]: r for recs in by_reg.values() for r in recs}
+    skipped = 0
+    if config.SKIP_DESELECTED_BEFORE_EXTRACTION:        # export would drop these anyway (same sub-section filter)
+        from export import load_deselected
+        from select_sections import in_subsection
+        des = load_deselected(case_id, config.SPEC_LISTS_COMPLETE)
+        kept = [c for c in candidates if not any(in_subsection(by_id[c["id"]], s) for s in des.get(c["regulation"], ()))]
+        skipped, candidates = len(candidates) - len(kept), kept
     tables = load_tables({t for c in candidates for t in by_id[c["id"]]["table_ids"]})
     run = Run(profile, by_id, tables)
 
@@ -240,6 +247,7 @@ def extract_case(case_id: str, out_dir: Path | None = None, only: set[str] | Non
     with open(out_dir / "extracted.jsonl", "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    run.log["candidates_skipped_deselected"] = skipped
     return {"rows": rows, "log": dict(run.log), "batches_planned": len(batches)}
 
 

@@ -34,7 +34,8 @@ def final_decisions(case_id: str, unknown_policy: str | None = None, drop_overla
     apply_unknown_policy(decisions, unknown_policy)
     if config.VEHICLE_CATEGORY_CHECK if vehicle_category_check is None else vehicle_category_check:
         profile = json.loads((case_dir / "profile.json").read_text(encoding="utf-8"))
-        apply_vehicle_category_check(decisions, profile, json.loads(config.SCOPES_JSON.read_text(encoding="utf-8")))
+        apply_vehicle_category_check(decisions, profile, json.loads(config.SCOPES_JSON.read_text(encoding="utf-8")),
+                                     primary=config.VEHICLE_CATEGORY_USE_PRIMARY)
     apply_supersession(decisions)
     overlap_path = case_dir / "overlap.json"
     if drop_overlap and overlap_path.is_file():

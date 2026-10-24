@@ -190,9 +190,22 @@ def category_overlap(scope_cats: set[str], product_cats: set[str]) -> bool:
     return any(s == p or p.startswith(s) or s.startswith(p) for s in scope_cats for p in product_cats)
 
 
-def apply_vehicle_category_check(decisions: list[dict], profile: dict, scopes: dict) -> None:
-    """Explicit category mismatch (scope limited to categories the product is not in) -> applies = no, outside_scope."""
-    product = {t for c in profile.get("vehicle_categories", []) for t in CATEGORY_TOKEN.findall(c)}
+def primary_categories(profile: dict) -> set[str]:
+    """Vehicle categories the materials state as the product's own: the stated "vehicle category" fact, read up to its
+    first dash, full stop or bracket (so categories named in remarks do not count). Empty = ambiguous."""
+    found: set[str] = set()
+    for f in profile.get("facts", []):
+        if f.get("status") == "stated" and re.search(r"vehicle\s+categor", f.get("feature", ""), re.I):
+            head = re.split(r"[—–(.;]|\s-\s", f.get("evidence", "").strip().strip('"\u201c\u201d'), maxsplit=1)[0]
+            found.update(CATEGORY_TOKEN.findall(head))
+    return found
+
+
+def apply_vehicle_category_check(decisions: list[dict], profile: dict, scopes: dict, primary: bool = False) -> None:
+    """Explicit category mismatch (scope limited to categories the product is not in) -> applies = no, outside_scope.
+    primary: use primary_categories (the stated category), not every category the profile lists."""
+    product = primary_categories(profile) if primary else {t for c in profile.get("vehicle_categories", [])
+                                                           for t in CATEGORY_TOKEN.findall(c)}
     if not product:
         return
     for d in decisions:

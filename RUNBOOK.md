@@ -5,8 +5,8 @@ Everything below runs from the repository root in the `Farsighted` conda environ
 
 ## 0. Before you start (Saturday night)
 - Commit or stash your local work, so that `git pull` has nothing to merge into.
-- Decide the budget. A full run on a front-bumper-sized case costs about **EUR 22 to 32** (table in section 5), well above
-  the dev experiments. Decide whether that is acceptable before 08:00.
+- Decide the budget. A full run on a front-bumper-sized case costs about **EUR 11 to 17** with the `v8_b_lean` preset and EUR 16 to 25 with
+  `v8_b` (table in section 5, Sonnet 5.5 at $2 / $10 per million tokens). The team has EUR 50 reserved for Sunday.
 - Keep `build/cache/` (every dev API answer is cached there; deleting it makes dev reruns cost money).
 
 ## 1. Get the case (as soon as it is released)
@@ -21,9 +21,9 @@ ls tools/                                   # preflight: none exists today. If u
 ```
 
 ## 2. Run the pipeline
-Pick the preset (section 3). The recommended first run is `v7_c`:
+Pick the preset (section 3). The recommended run is `v8_b_lean` (v8_b with the cost cuts; the config default, unset, is plain `v8_b`):
 ```bash
-FARSIGHTED_PRESET=v7_c python src/run_case.py cases/$CASE 2>&1 | tee build/run_$CASE.log
+FARSIGHTED_PRESET=v8_b_lean python src/run_case.py cases/$CASE 2>&1 | tee build/run_$CASE.log
 ```
 Stages and where they stop being repeated: profile (2), screening (3), overlap (3b), sections (4), sub-sections (4b),
 extraction (5), faithfulness (5b), review (5c, only the prompt the preset uses), export (6). A finished stage is skipped on the
@@ -33,7 +33,7 @@ no paid call.
 Look at the log after the screening stage: the number of regulations that apply, and `cases_extra`-style surprises (a
 whole-vehicle regulation kept for an exterior part is expected; do NOT turn on `SCREEN_EXCLUDE_VEHICLE_LEVEL`, see section 6).
 
-## 3. Presets (`FARSIGHTED_PRESET` unset = **v7_c**, the default)
+## 3. Presets (`FARSIGHTED_PRESET` unset = **v8_b**, the default)
 | Preset | Switches set | What it exports |
 |---|---|---|
 | `v5_a` | none (config defaults) | drops test_method / conformity_of_production unless high, drops low confidence, basic review of medium items |
@@ -41,12 +41,14 @@ whole-vehicle regulation kept for an exterior part is expected; do NOT turn on `
 | `v7_b` | v7_a + `REVIEW_LOW_CONFIDENCE` | + low-confidence items reviewed (basic prompt) |
 | `v7_c` | v7_b + `REVIEW_PROMPT = "criteria"` | same, with the criteria review prompt (`review_criteria_system.md`) (default) |
 | `v8_a` | `REVIEW_ALL` (criteria prompt) | every extracted item reviewed, any confidence or category, kept at probability >= 15; no floor, no category rules |
-| `v8_b` | v8_a + `REVIEW_BORDERLINE_TWICE` | items with a first probability of 10-40 get a second review (request differs by a "Review pass 2." line); the mean decides |
+| `v8_b` | v8_a + `REVIEW_BORDERLINE_TWICE` | items with a first probability of 10-40 get a second review (request differs by a "Review pass 2." line); the mean decides (default; platform on dev: 404 req, P 39.6%, R 84.2%, F2 68.7%) |
+| `v8_c` | v8_b + `SPEC_LISTS_COMPLETE = True` | sub-sections for devices/functions not on an explicit list in the materials are dropped too. Dev: 403 req (1 fewer than v8_b), judge F2 .660 vs .659: no gain. **Not recommended for a bumper**: on the synthetic bumper it drops 88 more sub-sections, including pedestrian headform tests, the AEBS pedestrian test, sensor EMC clauses and the number-plate lamp clauses. Needs no new calls if `subsections.json` exists (it holds both settings). |
+| `v8_b_lean` | v8_b + cost cuts | same exported requirements as v8_b, but: no extraction of candidates inside sub-sections the export drops anyway (`SKIP_DESELECTED_BEFORE_EXTRACTION`), `FAITHFULNESS_CHECK` off, and the vehicle category check on with the primary category (`VEHICLE_CATEGORY_CHECK`, `VEHICLE_CATEGORY_USE_PRIMARY`) |
 
 Dev result (local judge, requirement level; the judge reads about 0.05 below the platform for v5_a):
 v5_a F2 0.611, v7_a 0.568, v7_b 0.555, v7_c 0.648, v8_a 0.655, **v8_b 0.659** (differences between v7_c, v8_a and v8_b are within noise).
 v8 needs reviews of the high-confidence items too (about 215 on dev, 24 calls, 0.6 USD) and, for v8_b, a second pass on about 320 borderline items (35 calls, 0.9 USD):
-`FARSIGHTED_PRESET=v8_b python src/run_case.py cases/$CASE` runs both (stage 5c). Upload order for the held-out case: v7_c first, then v8_a or v8_b.
+`FARSIGHTED_PRESET=v8_b python src/run_case.py cases/$CASE` runs both (stage 5c). Upload order for the held-out case: `v8_b_lean` (= v8_b) first; if time remains, `v7_c` as a second, different file. Platform on dev: v7_c 452 req, P 35.4%, R 84.2%, F2 66.0%; v8_b 404 req, P 39.6%, R 84.2%, F2 68.7%.
 
 Further variants from the same extraction need no new extraction. Each preset needs reviews for its own items, which cost
 a few EUR per prompt (`python src/review_medium.py cases/$CASE --dry-run` prints the estimate first):
@@ -68,25 +70,25 @@ cp build/cases/$CASE/submission.json ~/Desktop/UPLOAD_${CASE}_v7_c_$(date +%H%M)
 case, so do not upload a worse file at the end.
 
 ## 5. Estimated cost and time of a full bumper-sized run
-From token counting of the synthetic front bumper (no generation; 5,232 candidate paragraphs, 342 extraction batches,
-about 3.05 M input tokens at 0.533 tokens per character), Sonnet at $3 / $15 per million tokens, USD to EUR 0.92:
+Token counting only (no generation) on the synthetic front bumper; Sonnet 5.5 at $2 / $10 per million tokens, cache reads
+$0.20, USD to EUR 0.92. Output tokens per candidate are a range measured on two runs (96 and 182); review items per
+candidate 0.30 to 0.55. Prompt caching (system prompt and profile, `PROMPT_CACHING`) is on by default in all presets: it was
+off before; a test showed a 5,107-token prefix written once and read afterwards. The review prefix is only about 1,450
+tokens, so no review saving is assumed.
 
-| Stage | Calls | Cost (EUR) |
-|---|---|---|
-| Profile (Opus, 1 call), screening (56), overlap, sections (16), sub-sections (about 32) | about 105 | 2.5 to 3 |
-| Extraction + second look | about 350 | **15 to 22** (input 9.1 USD; output 7.5 to 14.3 USD, from 96 to 182 output tokens per candidate measured on two runs) |
-| Faithfulness | not measured on the bumper | about 2 to 4 (an estimate from dev: 1.5 USD) |
-| Review, one prompt | not measured on the bumper | about 2 to 5 (an estimate: about 0.0025 USD per item, 800 to 1,800 items) |
-| **Total** | | **about 22 to 32** |
+| | v8_b | v8_b, caching off | v8_b_lean |
+|---|---|---|---|
+| Candidates / extraction batches | 5,232 / 342 | same | 4,238 / 285 (-366 in deselected sub-sections, -628 in a regulation for other vehicle categories) |
+| Extraction + second look (USD) | 8.7 to 13.5 | 11.7 to 16.4 | 7.1 to 11.0 |
+| Review: first pass + 42% second pass (USD) | 3.7 to 7.0 | same | 3.0 to 5.6 |
+| Faithfulness (USD) | 3.0 to 5.5 | same | 0 (off) |
+| Profile, screening, overlap, sections, sub-sections (USD) | 1.7 | same | 1.7 |
+| **Total (EUR)** | **15.7 to 25.4** | 18.4 to 28.1 | **10.9 to 16.8** |
+| API calls | 770 to 1,040 | same | 580 to 730 |
+| Wall-clock at 6 workers (1.3 to 1.7 s per call effective) | 17 to 29 min | same | 13 to 21 min |
 
-Time at the current concurrency (6 workers): the 11-call bumper test took 18 s, which gives about 10 minutes for the 350
-extraction calls; earlier dev extraction runs took 7 to 35 minutes depending on rate limits. Plan 25 to 60 minutes for
-the whole pipeline. Screening, sections and review run in a few minutes each.
-
-Levers if the cost is too high (none is applied automatically): skip regulations whose scope is clearly for other vehicle
-categories (about 12% of the bumper's candidates are in a regulation for buses), or extract in two goes with
-`python src/extract.py cases/$CASE --only "UN Rxx,UN Ryy"` (partial run; overwrites `extracted.jsonl`, so do it once, with all
-regulations you want).
+Rate limits can double the time (earlier dev extraction runs took up to 35 minutes). Opus on the second review pass was not
+built (the diagnosis did not call for it); if ever added it costs about $1 to 2 more. Both presets are far under EUR 50.
 
 ## 6. Settings that are safe or not for a bumper
 - **v5_a settings drop most test requirements of a collision-test regulation.** On the synthetic bumper, for the
@@ -108,4 +110,5 @@ regulations you want).
 | Faithfulness fails or runs out of money | `python src/export.py cases/$CASE --no-faithfulness --name nofaith` (uncorrected texts). |
 | Sub-section stage fails | `FARSIGHTED_OVERRIDES="SUBSECTION_FILTER=0"`. |
 | Review is missing or fails | Export raises "no review for ..."; run `python src/review_medium.py cases/$CASE` again (unanswered items are asked again), or fall back: `FARSIGHTED_OVERRIDES="REVIEW_MEDIUM=0,REVIEW_INSTEAD_OF_CATEGORY_DROP=0,REVIEW_LOW_CONFIDENCE=0"` exports the v3-style file with no review. |
+| Cost estimate exceeded or a stage keeps failing | Fall back to `FARSIGHTED_PRESET=v8_b_lean` (cheapest), then `v7_c` (no second review pass, no review of high-confidence items), then `v5_a`. |
 | Time is nearly up | Export whatever exists: the cheapest valid fallback ladder is v7_c, then v5_a, then the no-review line above. Validate and upload the best file you have. |

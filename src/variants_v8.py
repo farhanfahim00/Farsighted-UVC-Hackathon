@@ -35,6 +35,8 @@ VARIANTS = {
              "review_twice": False},
     "v8_b": {**BASE, "review_instead": False, "review_low": False, "review_prompt": "criteria", "review_all": True,
              "review_twice": True},
+    "v8_c": {**BASE, "spec_lists_complete": True, "review_instead": False, "review_low": False,
+             "review_prompt": "criteria", "review_all": True, "review_twice": True},     # v8_b + SPEC_LISTS_COMPLETE
 }
 
 
@@ -90,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nrequirements per regulation:\n  " + f"{'':<6}" + "".join(f"{k:>9}" for k in regs))
     for n, r in results.items():
         print("  " + f"{n:<6}" + "".join(f"{r['per_regulation'].get(k, 0):>9}" for k in regs))
-    for n in ("v8_a", "v8_b"):
+    for n in ("v8_a", "v8_b", "v8_c"):
         r = results[n]
         print(f"\n{n}: high-confidence items dropped {sum(r['high_confidence_dropped'].values())} {r['high_confidence_dropped']}")
         print(f"{n} expected paragraphs lost vs v5_a: {r['lost_vs_v5_a']}\n{n} gained vs v5_a: {r['gained_vs_v5_a']}")
