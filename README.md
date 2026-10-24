@@ -45,6 +45,19 @@ python tools/fetch_regulations.py --role base # only the base versions
 
 Every download is checked against its checksum. The links expire after the hackathon, so download what you need while it runs. `regulations/index.json` also gives the original UNECE address of each regulation.
 
+**`CERTIFICATE_VERIFY_FAILED` on macOS?** If every download fails with `[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate`, your Python has no CA certificates to check the server against. This is common with Python from python.org, which does not use the macOS keychain. Fix it once with either of these:
+
+- Run the certificate installer that ships with Python (use your version number): `open "/Applications/Python 3.13/Install Certificates.command"`. If you see no `Install Certificates.command` in that folder, your Python did not come from python.org: use the second option.
+- Or point Python at the `certifi` bundle:
+
+  ```bash
+  python3 -m pip install --user certifi
+  export SSL_CERT_FILE="$(python3 -m certifi)"   # add this line to ~/.zshrc to keep it
+  python3 tools/fetch_regulations.py
+  ```
+
+Check the fix with `python3 -c "import urllib.request; urllib.request.urlopen('https://www.python.org')"`. If it prints nothing, it worked. Files that already downloaded are skipped when you run the script again. On a corporate network that inspects HTTPS traffic, ask IT for the company root certificate, then set `SSL_CERT_FILE` to that file.
+
 **Two versions of every regulation.** Each entry in `regulations/index.json` has a `base` version and, for most regulations, a `latest` version (a newer supplement or series).
 
 - **Main goal:** the expected requirements are built on the **base** version. Cite the pages of its file(s).
