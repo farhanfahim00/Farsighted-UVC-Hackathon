@@ -17,6 +17,22 @@ from .selection import select
 from .verification import obligation_checklist
 
 
+def packets_for_tier(index, selection, tier='all'):
+    """Select only model-chosen subsections, or retain the legacy review union.
+
+    `all` reproduces V2 behavior and is the safe default. `primary` is an
+    explicit experimental setting: omitted safety-net paragraphs remain in
+    selection.json for audit, but are *not* extracted in that run.
+    """
+    if tier not in ('all', 'primary'):
+        raise ValueError('Unknown selection tier: ' + str(tier))
+    primary = selection.get('primary_target_ids', selection['target_ids'])
+    packets = index.chunks(primary, expand_descendants=False)
+    if tier == 'all' and selection.get('review_target_ids'):
+        packets.extend(index.chunks(selection['review_target_ids'], expand_descendants=False))
+    return packets
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('prepare', 'candidates', 'run'))
@@ -31,12 +47,15 @@ def main(argv=None):
     parser.add_argument('--max-usd', type=float)
     parser.add_argument('--text-only', action='store_true', help='Controlled extraction comparison; product images are still supplied')
     parser.add_argument('--reuse-candidates', type=Path, help='Reuse a checked product profile and screening result from a prior candidate run')
+    parser.add_argument('--selection-tier', choices=('all', 'primary'), default='all',
+                        help='all=original V2 full recall queue; primary=screened selected subsections only (experimental)')
     parser.add_argument('--legacy-cache-fingerprint', action='append', default=[],
                         help='Previous run-status runtime_fingerprint for exact-payload legacy cache reuse')
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     fingerprint = runtime_fingerprint()
     status = {'state': 'preparing', 'partial_targets': bool(args.targets), 'online': args.online,
+              'selection_tier': args.selection_tier,
               'runtime_fingerprint': fingerprint, 'semantic_score': None}
     save(args.out / 'run-status.json', status)
     client = None
@@ -125,10 +144,10 @@ def main(argv=None):
                 status.update(state='candidates_ready', stage='selection_saved', case_id=packet['case_id'],
                               selected_paragraphs=len(selected_rows))
                 return 0
-            # Spend extraction capacity on supported candidates before disputed exclusions.
-            packets = index.chunks(selection.get('primary_target_ids', selection['target_ids']), expand_descendants=False)
-            if selection.get('review_target_ids'):
-                packets.extend(index.chunks(selection['review_target_ids'], expand_descendants=False))
+            # The new fine-grained primary choice is effective only when the
+            # operator explicitly requests `primary`. Otherwise review
+            # candidates would still be extracted, defeating the experiment.
+            packets = packets_for_tier(index, selection, args.selection_tier)
             save(args.out / 'packets.json', packets)
             status['unresolved_reference_count'] = sum(len(p['unresolved_references']) for p in packets)
         if not packets:

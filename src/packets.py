@@ -92,13 +92,20 @@ class EvidenceIndex:
         result = []
         for reg, rows in self.by_reg.items():
             roots = [r for r in rows if not r['parent_id']]
+            root_ids = {r['id'] for r in roots}
+            # Offer one extra level of choice without multiplying the entire
+            # descendant tree into the screening prompt. Selection of a child
+            # still includes its complete subtree through descendants().
+            children = [r for r in rows if r['parent_id'] in root_ids]
             scope = [r for r in rows if not r['annex'] and not r['section'] and
                      (r['paragraph'] == '1' or r['paragraph'].startswith('1.'))]
             if reg in self.scopes:
                 scope = [self.by_id[rid] for rid in self.scopes[reg].get('paragraph_ids', [])]
             result.append({'regulation': reg, 'scope_context': scope,
                 'sections': [{'id': r['id'], 'paragraph': r['paragraph'], 'title': r.get('title'),
-                              'preview': r['text'][:350]} for r in roots],
+                              'depth': 0 if r['id'] in root_ids else 1,
+                              'preview': r['text'][:350] if r['id'] in root_ids else r['text'][:200]}
+                             for r in roots + children],
                 'scope_limit_note': 'Scope-heading detection is heuristic; inspect the source before excluding a regulation.'})
         return result
 
