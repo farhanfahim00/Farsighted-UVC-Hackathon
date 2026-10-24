@@ -1,0 +1,13 @@
+{
+  "team_id": "team-07",
+  "model": "claude-sonnet-5-5",
+  "concurrency": 4,
+  "timeout_seconds": 300,
+  "max_attempts": 8,
+  "max_output_tokens": 12000,
+  "max_reserved_usd": 5.0,
+  "input_usd_per_million": 2.0,
+  "output_usd_per_million": 10.0,
+  "cache_read_usd_per_million": 0.1,
+  "cache_write_usd_per_million": 2.5
+}
