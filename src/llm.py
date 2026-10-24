@@ -10,6 +10,8 @@ import urllib.request
 
 from .contracts import ROOT, digest, save
 
+API_VERSION = '2026-10-21'
+
 
 class BudgetExceeded(RuntimeError):
     pass
@@ -48,7 +50,7 @@ def load_key():
 def transport(payload, timeout):
     request = urllib.request.Request('https://api.anthropic.com/v1/messages',
         data=json.dumps(payload).encode(), headers={'Authorization': 'Bearer ' + load_key(),
-        'anthropic-version': '2026-10-21', 'Content-Type': 'application/json'})
+        'anthropic-version': API_VERSION, 'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.load(response)
@@ -76,6 +78,11 @@ class Client:
             raise ValueError('Prices cannot be negative')
         self.lock, self.key_locks = threading.Lock(), {}
         self.attempts, self.reserved, self.spent = 0, 0.0, 0.0
+        self.legacy_fingerprints = list(config.get('legacy_cache_fingerprints', []))
+
+    def attempt_limit_reached(self):
+        with self.lock:
+            return self.attempts >= self.config['max_attempts']
 
     def log(self, event):
         self.ledger.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +100,10 @@ class Client:
         payload = {'model': self.config['model'], 'max_tokens': self.config['max_output_tokens'],
                    'system': system, 'messages': [{'role': 'user', 'content': content}],
                    'output_config': {'format': {'type': 'json_schema', 'schema': schema}}}
-        key = digest({'fingerprint': fingerprint, 'payload': payload})
+        # A response depends on the actual model-facing request, not on
+        # unrelated Python implementation files. This remains content-addressed
+        # as the model, prompt, schema, images or evidence change.
+        key = digest({'api_version': API_VERSION, 'payload': payload})
         with self.lock:
             key_lock = self.key_locks.setdefault(key, threading.Lock())
         with key_lock:
@@ -103,38 +113,51 @@ class Client:
                 with self.lock:
                     self.log({'event': 'cache_hit', 'request_hash': key})
             else:
-                if not self.online:
-                    raise CacheMiss('No cached response. Paid requests require --online.')
-                # Conservative local reservation: serialized bytes (including base64 images)
-                # count as input tokens. This is not an authoritative provider billing cap.
-                reserve = (len(json.dumps(payload).encode()) * self.config['input_usd_per_million'] +
-                           self.config['max_output_tokens'] * self.config['output_usd_per_million']) / 1e6
-                for attempt in range(3):
+                # Previous versions included an all-source-code fingerprint in
+                # cache keys. Opt-in legacy lookup recovers *exactly identical*
+                # payloads without blindly trusting stale checkpoints.
+                old_path = next((self.cache / (digest({'fingerprint': fp, 'payload': payload}) + '.json')
+                                 for fp in dict.fromkeys([fingerprint, *self.legacy_fingerprints])
+                                 if (self.cache / (digest({'fingerprint': fp, 'payload': payload}) + '.json')).is_file()), None)
+                if old_path is not None:
+                    response = json.loads(old_path.read_text(encoding='utf-8'))
                     with self.lock:
-                        if self.attempts >= self.config['max_attempts'] or self.reserved + self.spent + reserve > self.config['max_reserved_usd']:
-                            raise BudgetExceeded('Local attempt/spend reservation limit reached; resume with an explicit budget')
-                        self.attempts += 1
-                        self.reserved += reserve
-                        self.log({'event': 'attempt', 'request_hash': key, 'attempt': self.attempts, 'reserved_usd': reserve})
-                    try:
-                        response = self.send(payload, self.config['timeout_seconds'])
-                    except (ProviderError, TimeoutError) as exc:
-                        # Keep failed reservations: a timeout may have incurred a charge.
-                        with self.lock:
-                            self.log({'event': 'failed', 'request_hash': key, 'type': type(exc).__name__})
-                        retry = isinstance(exc, TimeoutError) or exc.status in (429, 500, 502, 503, 504, 529)
-                        if not retry or attempt == 2:
-                            raise
-                        self.sleep(exc.retry_after if isinstance(exc, ProviderError) and exc.retry_after else 2 ** attempt)
-                        continue
-                    with self.lock:
-                        cost = self.cost(response.get('usage', {}))
-                        self.reserved -= reserve
-                        self.spent += cost
-                        self.log({'event': 'response', 'request_hash': key, 'usage': response.get('usage', {}),
-                                  'estimated_usd': cost, 'stop_reason': response.get('stop_reason')})
+                        self.log({'event': 'legacy_cache_hit', 'request_hash': key,
+                                  'legacy_hash': old_path.stem})
                     save(path, response)
-                    break
+                else:
+                    if not self.online:
+                        raise CacheMiss('No cached response. Paid requests require --online.')
+                    # Conservative local reservation: serialized bytes (including base64 images)
+                    # count as input tokens. This is not an authoritative provider billing cap.
+                    reserve = (len(json.dumps(payload).encode()) * self.config['input_usd_per_million'] +
+                               self.config['max_output_tokens'] * self.config['output_usd_per_million']) / 1e6
+                    for attempt in range(3):
+                        with self.lock:
+                            if self.attempts >= self.config['max_attempts'] or self.reserved + self.spent + reserve > self.config['max_reserved_usd']:
+                                raise BudgetExceeded('Local attempt/spend reservation limit reached; resume with an explicit budget')
+                            self.attempts += 1
+                            self.reserved += reserve
+                            self.log({'event': 'attempt', 'request_hash': key, 'attempt': self.attempts, 'reserved_usd': reserve})
+                        try:
+                            response = self.send(payload, self.config['timeout_seconds'])
+                        except (ProviderError, TimeoutError) as exc:
+                            # Keep failed reservations: a timeout may have incurred a charge.
+                            with self.lock:
+                                self.log({'event': 'failed', 'request_hash': key, 'type': type(exc).__name__})
+                            retry = isinstance(exc, TimeoutError) or exc.status in (429, 500, 502, 503, 504, 529)
+                            if not retry or attempt == 2:
+                                raise
+                            self.sleep(exc.retry_after if isinstance(exc, ProviderError) and exc.retry_after else 2 ** attempt)
+                            continue
+                        with self.lock:
+                            cost = self.cost(response.get('usage', {}))
+                            self.reserved -= reserve
+                            self.spent += cost
+                            self.log({'event': 'response', 'request_hash': key, 'usage': response.get('usage', {}),
+                                      'estimated_usd': cost, 'stop_reason': response.get('stop_reason')})
+                        save(path, response)
+                        break
             if response.get('stop_reason') != 'end_turn':
                 raise IncompleteResponse(response.get('stop_reason'))
             texts = [b['text'] for b in response.get('content', []) if b.get('type') == 'text']

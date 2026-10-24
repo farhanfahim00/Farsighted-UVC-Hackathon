@@ -23,6 +23,21 @@ class SharedIndexChecks(unittest.TestCase):
         self.assertTrue(all(len(r['sha256']) == 64 for r in self.index.rows))
         self.assertEqual(len(self.index.by_reg), 56)
 
+    def test_two_duties_from_one_clause_and_table_cites_governing_clause(self):
+        clause = self.index.target('UN R10::6.9.1')
+        packet = next(p for p in self.index.chunks([clause]) if any(
+            t['paragraph'] == '6.9.1. Table 3b' for t in p['targets']))
+        alias = next(a for a in packet['allowed_target_refs'] if any(
+            p['paragraph'] == '6.9.1. Table 3b' for p in packet['targets']
+            if p['id'] in packet['refs'][a]['target_paragraph_ids']))
+        rows = [{'text': text, 'applicability': 'conditional', 'condition': 'if ESA tested',
+                 'reason': 'Independent test duty', 'primary_ref': alias, 'refs': [alias]}
+                for text in ('For pulse 1, the ESA shall meet level A.',
+                             'For pulse 2a, the ESA shall meet level B.')]
+        checked = validate_rows({'requirements': rows, 'exclusion_reason': ''}, packet)
+        self.assertEqual(len(checked['valid']), 2)
+        self.assertTrue(all(r['source']['paragraph'] == '6.9.1' for r in checked['valid']))
+
     def test_table_cells_risks_and_line_aliases_reach_model_packet(self):
         row = next(r for r in self.index.rows if r['table_ids'] and any(self.index.tables[t]['cells'] for t in r['table_ids']))
         packet = self.index.packet([row['id']])

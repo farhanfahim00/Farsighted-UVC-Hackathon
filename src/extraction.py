@@ -11,6 +11,10 @@ def extract(client, packet, product, fingerprint, images=True, depth=0):
     if packet.get('context_over_budget'):
         return {'packet_id': packet['packet_id'], 'valid': [], 'quarantine': [],
                 'errors': ['Evidence context exceeds local limit; rebuild a smaller target group'], 'duplicates': []}
+    # Skip costly PDF rendering once this invocation cannot start another request.
+    if hasattr(client, 'attempt_limit_reached') and client.attempt_limit_reached():
+        return {'packet_id': packet['packet_id'], 'valid': [], 'quarantine': [],
+                'errors': ['BudgetExceeded: Local attempt limit reached; resume with an explicit budget'], 'duplicates': []}
     content = [{'type': 'text', 'text': json.dumps({'product': product, 'packet': model_packet(packet)}, ensure_ascii=False)}]
     if images:
         content.extend(page_images(packet))
@@ -21,9 +25,22 @@ def extract(client, packet, product, fingerprint, images=True, depth=0):
         if not children:
             return {'packet_id': packet['packet_id'], 'valid': [], 'quarantine': [], 'duplicates': [], 'errors': [str(exc)]}
         results = [safe_extract(client, child, product, fingerprint, images, depth+1) for child in children]
-        return {'packet_id': packet['packet_id'],
-                **{key: [row for result in results for row in result.get(key, [])] for key in ('valid', 'quarantine', 'duplicates', 'errors')},
-                'split_children': results}
+        merged = {'packet_id': packet['packet_id'],
+                  **{key: [row for result in results for row in result.get(key, [])]
+                     for key in ('valid', 'quarantine', 'duplicates', 'errors')},
+                  'split_children': results}
+        # All child windows returning no-duty is a legitimate completed result.
+        # Previously this reason was discarded, so the parent appeared failed.
+        if all(r.get('exclusion_reason') for r in results) and not merged['valid']:
+            merged['exclusion_reason'] = 'All split targets explicitly returned no applicable duty'
+        unique = {}
+        for row in merged['valid']:
+            if row['id'] in unique:
+                merged['duplicates'].append(row)
+            else:
+                unique[row['id']] = row
+        merged['valid'] = list(unique.values())
+        return merged
     result = validate_rows(output, packet)
     result.update(packet_id=packet['packet_id'], errors=[], exclusion_reason=output.get('exclusion_reason', ''))
     if result['quarantine']:

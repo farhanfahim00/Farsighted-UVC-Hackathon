@@ -99,10 +99,12 @@ class RuntimeChecks(unittest.TestCase):
         result = client.parallel(ask, range(10))
         self.assertEqual((result.count('sent'), result.count('blocked'), client.attempts), (3, 7, 3))
 
-    def test_different_parser_fingerprint_invalidates_cache(self):
+    def test_unchanged_wire_request_reuses_cache_across_code_fingerprints(self):
         client = self.client(lambda *_: response({}))
         client.request('s', 'c', EXTRACTION, 'parser-v1')
         client.request('s', 'c', EXTRACTION, 'parser-v2')
+        self.assertEqual(client.attempts, 1)
+        client.request('changed prompt', 'c', EXTRACTION, 'parser-v2')
         self.assertEqual(client.attempts, 2)
 
     def test_uncertain_fact_cannot_justify_regulation_exclusion(self):

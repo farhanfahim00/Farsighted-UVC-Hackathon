@@ -46,6 +46,19 @@ def validate_rows(output, packet):
             quarantine.append({'row': raw, 'errors': ['Primary evidence has ambiguous paragraph ownership']})
             continue
         owner = targets[owners[0]]
+        # A table pseudo-section is evidence within its governing numbered clause.
+        # Preserve the table line as the citation, but export the clause label.
+        if owner.get('is_table') or owner.get('kind') == 'table':
+            # A table line's target can be a synthetic pseudo-paragraph. Its
+            # numbered governing clause may be context-only, not a target.
+            indexed = {r['id']: r for r in packet.get('context_paragraphs', [])}
+            indexed.update(targets)
+            parents = [indexed[pid] for pid in owner.get('parent_ids', []) if pid in indexed
+                       and not (indexed[pid].get('is_table') or indexed[pid].get('kind') == 'table')]
+            if not parents:
+                quarantine.append({'row': raw, 'errors': ['Table target has no verified governing numbered clause']})
+                continue
+            owner = parents[0]
         source = {'regulation': owner['regulation'], 'version': owner['version'],
                   'paragraph': owner['paragraph'], 'page': primary['page']}
         key = digest({'text': normalized(text), 'source': source})

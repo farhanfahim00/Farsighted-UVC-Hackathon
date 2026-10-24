@@ -16,6 +16,20 @@ class EvidenceIndex:
     def __init__(self, folder):
         folder = Path(folder)
         loaded = load_index(folder)
+        # A path is not an index identity: rebuilding the same folder must
+        # invalidate candidate/checkpoint reuse even if paragraph IDs survive.
+        files = ['manifest.json', 'paragraphs.jsonl', 'pages.jsonl',
+                 'tables.jsonl', 'definitions.jsonl', 'regulation_scopes.json']
+        hashes = []
+        for name in files:
+            path = folder / name
+            if path.is_file():
+                hasher = hashlib.sha256()
+                with path.open('rb') as handle:
+                    for block in iter(lambda: handle.read(1024 * 1024), b''):
+                        hasher.update(block)
+                hashes.append((name, hasher.hexdigest()))
+        self.identity = digest(hashes)
         self.manifest, self.rows = loaded['manifest'], loaded['rows']
         self.format = loaded['format']
         self.tables = {t['id']: t for t in loaded['tables']}
@@ -65,9 +79,13 @@ class EvidenceIndex:
 
     def descendants(self, ids):
         selected = set(ids)
-        for r in self.rows:
-            if any(pid in selected for pid in r['parent_ids']):
-                selected.add(r['id'])
+        # Do not assume that the indexer serialized parents before children.
+        while True:
+            additions = {r['id'] for r in self.rows
+                         if r['id'] not in selected and any(pid in selected for pid in r['parent_ids'])}
+            if not additions:
+                break
+            selected.update(additions)
         return [r['id'] for r in self.rows if r['id'] in selected]
 
     def outlines(self):
@@ -84,10 +102,17 @@ class EvidenceIndex:
                 'scope_limit_note': 'Scope-heading detection is heuristic; inspect the source before excluding a regulation.'})
         return result
 
-    def chunks(self, target_ids, max_chars=24000):
-        """Keep each chunk within one physical PDF/version; oversized paragraphs split by target lines."""
+    def chunks(self, target_ids, max_chars=24000, expand_descendants=True):
+        """Keep chunks within one PDF/version; expand explicit diagnostic roots by default.
+
+        A tiered selection has *already* expanded descendants and must call
+        expand_descendants=False. Otherwise a review-tier parent can re-add a
+        primary-tier child, sending the same target twice.
+        """
         groups, current, size, document = [], [], 0, None
-        for rid in self.descendants(target_ids):
+        selected = self.descendants(target_ids) if expand_descendants else list(target_ids)
+        # Preserve source order: set iteration scrambled documents and defeated batching.
+        for rid in (r['id'] for r in self.rows if r['id'] in selected):
             row = self.by_id[rid]
             key = (row['regulation'], row['version'], row['file'])
             cost = len(row['text'])
@@ -99,9 +124,22 @@ class EvidenceIndex:
             document = key
         if current:
             groups.append(current)
-        return [self.packet(g) for g in groups]
+        def bounded(group):
+            packet = self.packet(group)
+            if packet['context_over_budget'] and len(group) > 1:
+                middle = len(group) // 2
+                return bounded(group[:middle]) + bounded(group[middle:])
+            if packet['context_over_budget'] and len(group) == 1:
+                # Preserve every target, parent, cross-reference, definition,
+                # table and footnote line; only drop otherwise-unlinked page
+                # lines. Never silently truncate an oversized target clause.
+                compact = self.packet(group, compact=True)
+                if not compact['context_over_budget']:
+                    return [compact]
+            return [packet]
+        return [packet for group in groups for packet in bounded(group)]
 
-    def packet(self, target_ids):
+    def packet(self, target_ids, compact=False):
         targets = [self.by_id[rid] for rid in target_ids]
         documents = {(r['regulation'], r['version'], r['file']) for r in targets}
         if len(documents) != 1:
@@ -150,15 +188,21 @@ class EvidenceIndex:
         # Preserve surrounding page text, including table headers, notes and orphan lines.
         pages = sorted({p for r in targets for p in range(r['page'], r['page_end'] + 1)})
         table_ids = {tid for rid in context_ids for tid in self.by_id[rid].get('table_ids', [])}
-        table_ids.update(t['id'] for t in self.tables.values() if
-            (t['regulation'], t['version'], t['file']) == doc and t['page'] in pages)
+        if not compact:
+            table_ids.update(t['id'] for t in self.tables.values() if
+                (t['regulation'], t['version'], t['file']) == doc and t['page'] in pages)
         attached_tables = [self.tables[tid] for tid in sorted(table_ids)]
         for table in attached_tables:
             wanted.update(table['source_line_ids'])
             if table['caption_line_id']:
                 wanted.add(table['caption_line_id'])
-        for page in pages:
-            wanted.update(l['id'] for l in self.pages[(*doc, page)]['lines'])
+        full_page_lines = {l['id'] for page in pages
+                           for l in self.pages[(*doc, page)]['lines']}
+        if not compact:
+            wanted.update(full_page_lines)
+        omitted_page_context = len(full_page_lines - wanted)
+        if any(lid not in wanted for r in targets for lid in r['source_line_ids']):
+            raise ValueError('Target source line lost during context reduction')
         ordered = sorted(wanted, key=lambda lid: (self.lines[lid]['page'], self.lines[lid]['bbox'][1], self.lines[lid]['bbox'][0], lid))
         refs = {f'L{i:06}': {**self.lines[lid], 'target_paragraph_ids': line_owners[lid]}
                 for i, lid in enumerate(ordered, 1)}
@@ -170,19 +214,47 @@ class EvidenceIndex:
                   'visual_pages': sorted(set((pages if any(r['has_table'] for r in targets) else []) +
                                              [t['page'] for t in attached_tables])),
                   'context_over_budget': False}
-        packet['context_over_budget'] = len(json.dumps(refs)) + len(json.dumps(attached_tables)) > 120000
+        # Do not change normal packet IDs or paid request payloads merely by
+        # introducing the compact fallback: legacy caches remain replayable.
+        if compact:
+            packet['context_reduced'] = True
+            packet['omitted_page_context_lines'] = omitted_page_context
+        # Budget the wire representation, not repeated internal provenance metadata.
+        packet['packet_id'] = '0' * 64
+        packet['context_over_budget'] = len(json.dumps(model_packet(packet))) > 120000 or len(packet['visual_pages']) > 8
+        packet.pop('packet_id')
         packet['packet_id'] = digest(packet)
         return packet
 
 
 def split_packet(packet):
+    """Split by complete target paragraphs first, not arbitrary evidence lines.
+
+    When there is only one target, fall back to line windows; all evidence
+    stays available as context and each window retains a distinct allowed set.
+    """
     allowed = packet['allowed_target_refs']
     if len(allowed) < 2:
         return []
-    middle = len(allowed) // 2
+    targets = packet['targets']
+    if len(targets) > 1:
+        mid = len(targets) // 2
+        groups = (targets[:mid], targets[mid:])
+        pieces = []
+        for group in groups:
+            ids = {t['id'] for t in group}
+            refs = [alias for alias in allowed if ids.intersection(packet['refs'][alias]['target_paragraph_ids'])]
+            if not refs:
+                return []
+            pieces.append((group, refs, 'target_paragraphs'))
+    else:
+        mid = len(allowed) // 2
+        pieces = [(targets, allowed[:mid], 'target_line_window'),
+                  (targets, allowed[mid:], 'target_line_window')]
     children = []
-    for refs in (allowed[:middle], allowed[middle:]):
-        child = {**packet, 'allowed_target_refs': refs, 'split_parent': packet['packet_id']}
+    for group, refs, mode in pieces:
+        child = {**packet, 'targets': group, 'allowed_target_refs': refs,
+                 'split_parent': packet['packet_id'], 'split_mode': mode}
         child.pop('packet_id', None)
         child['packet_id'] = digest(child)
         children.append(child)
@@ -202,7 +274,10 @@ def model_packet(packet):
                 for t in packet.get('tables', [])],
             'definitions': [{'term': d['term'], 'paragraph_id': d['paragraph_id']} for d in packet.get('definitions', [])],
             'source_lines': {alias: {'text': r['text'], 'page': r['page']} for alias,r in packet['refs'].items()},
-            'allowed_target_refs': packet['allowed_target_refs'], 'unresolved_references': packet['unresolved_references']}
+            'allowed_target_refs': packet['allowed_target_refs'], 'unresolved_references': packet['unresolved_references']} | (
+            {'context_reduced': True, 'omitted_page_context_lines': packet.get('omitted_page_context_lines', 0)}
+            if packet.get('context_reduced') else {}) | (
+            {'split_mode': packet['split_mode']} if packet.get('split_mode') else {})
 
 
 def page_images(packet):

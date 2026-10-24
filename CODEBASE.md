@@ -1,5 +1,25 @@
 # Start here
 
+## Full candidate coverage audit
+
+`python -m src.pipeline candidates --case cases/dev-rear-lamp --inputs spec.md exploded_view.updated.png --out runs/full-candidate-audit --online --max-attempts 16 --max-usd 5`
+
+This runs profile and screening only. `selection.json` separates primary candidates
+from disputed exclusions retained for review. Full `run` extracts primary packets
+first. Checkpoints preserve screening decisions and per-packet extraction results;
+the request cache supports replay. `coverage.json` measures execution, not F2.
+
+Evaluate separately with `python tools/audit_candidates.py --selection runs/full-candidate-audit/selection.json --out runs/full-candidate-audit/evaluation.json`.
+Only this offline evaluator reads development answers. Source coverage does not
+prove correct extraction, conditions, atomicity, or semantic recall.
+
+For a bounded full-case extraction after a verified candidate run, use
+`python -m src.pipeline run --case cases/dev-rear-lamp --inputs spec.md exploded_view.updated.png --reuse-candidates runs/full-candidate-audit --out runs/bounded-full-development --online --max-attempts 8 --max-usd 3`.
+The reuse path checks product packet and index identity. Inspect
+`target-accounting.json` and `obligation-checklist.json` before trusting an export.
+Budget-deferred or context-blocked packets leave the result partial. Checklist
+flags and parsed fields are review aids, not semantic approval.
+
 Work in **C:\UVC2026\farsighted**, branch `sami`. No separate repository is needed.
 `src/` is the connected runtime. Keep shared JSON interfaces stable when working
 with your teammate. Generated data stays under ignored `runs/`.
