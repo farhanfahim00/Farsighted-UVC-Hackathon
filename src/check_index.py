@@ -1,142 +1,168 @@
 #!/usr/bin/env python3
-"""Measure build/paragraphs.jsonl (base role only) against a worked example's expected.json.
+"""Strict check of the evidence index in build/ against a worked example's expected.json.
 
     python src/check_index.py
-    python src/check_index.py --expected cases/dev-rear-lamp/expected.json --paragraphs build/paragraphs.jsonl
+    python src/check_index.py --expected cases/dev-rear-lamp/expected.json --build build
 
-Reports, per distinct expected (regulation, paragraph) pair:
-  * found by label (labels normalised the way the scorer does it);
-  * of those, page within +/-1 of the expected page;
-  * for pairs not found by label: does the expected page exist, and does a key phrase of the expected text appear
-    on that page (separates labelling problems from text-extraction problems);
-  * per regulation: requirements picked by the experts vs paragraphs with "shall" in our index;
-  * every miss, with the closest label we produced on the expected page.
+Coverage comes from the index alone (no PDF is opened). Labels are normalised with the scorer's own
+tools/score_local.py:_paragraph_key (imported, not copied). A distinct expected (regulation, version, paragraph) is
+  * found          when a paragraph record has the same regulation, version and key;
+  * page exact     when, in addition, every page the experts cite for it lies within page..page_end of one such record;
+  * within +/-1    (diagnostic only, not counted as found) when each cited page is at most one page outside.
+
+Integrity checks (must all be 0): duplicate ids, broken source_line_ids / footnote_context_ids (not in pages.jsonl),
+dangling links (parent_id, children_ids, parent_chain, table_ids, cross_refs, tables' owner / entry ids).
+
+Exit code 1 when coverage is below 100% of the expected pairs or any integrity check fails.
 """
 
 from __future__ import annotations
+
 import argparse
-import difflib
 import json
-import re
-from collections import defaultdict
+import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
-import pymupdf
-
 ROOT = Path(__file__).resolve().parent.parent
-PDF_DIR = ROOT / "regulations" / "pdf"
+sys.path.insert(0, str(ROOT / "tools"))
+from score_local import _paragraph_key  # noqa: E402  (the scorer's normalisation, used as is)
 
 
-def paragraph_key(paragraph) -> str | None:
-    """Same normalisation as tools/score_local.py: case, commas, brackets, extra spaces, a dot that ends a word and a
-    leading 'paragraph' do not matter; dots inside a number do."""
-    text = str(paragraph or "").casefold().replace("§", " ")
-    text = re.sub(r"[,;:()\[\]]", " ", text)
-    text = re.sub(r"(?<![0-9a-z])\.|\.(?![0-9a-z])", " ", text)
-    text = " ".join(text.split())
-    text = re.sub(r"^(paragraphs?|para|par|section|clause)\s+", "", text)
-    return text or None
+def read_jsonl(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    with open(path, encoding="utf-8") as fh:
+        return [json.loads(l) for l in fh if l.strip()]
 
 
-def words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.casefold())
-
-
-def phrase_on_page(expected_text: str, page_text: str, n: int = 5) -> bool:
-    """True if any run of n consecutive words of the expected text appears on the page.
-    The experts paraphrase a little, so one matching n-gram is enough to show the text is there."""
-    page = " " + " ".join(words(page_text)) + " "
-    w = words(expected_text)
-    if len(w) < n:
-        return " ".join(w) in page
-    return any(f" {' '.join(w[i:i + n])} " in page for i in range(len(w) - n + 1))
+def integrity(records: list[dict], pages: list[dict], tables: list[dict], defs: list[dict]) -> dict[str, int]:
+    """Counts of integrity problems; every value must be 0."""
+    line_ids = [ln["id"] for p in pages for ln in p["lines"]]
+    known_lines = set(line_ids)
+    ids = {r["id"] for r in records}
+    table_ids = {t["id"] for t in tables}
+    problems: Counter = Counter()
+    for name, rows in (("paragraphs", records), ("tables", tables), ("definitions", defs)):
+        problems[f"duplicate {name} ids"] = sum(n - 1 for n in Counter(r["id"] for r in rows).values() if n > 1)
+    problems["duplicate line ids"] = len(line_ids) - len(known_lines)
+    for r in records:
+        problems["broken source_line_ids"] += sum(1 for i in r["source_line_ids"] if i not in known_lines)
+        problems["paragraphs without source lines"] += not r["source_line_ids"]
+        problems["broken footnote_context_ids"] += sum(1 for i in r["footnote_context_ids"] if i not in known_lines)
+        links = [r["parent_id"]] if r["parent_id"] else []
+        links += r["children_ids"] + r["parent_chain"] + [x["target_id"] for x in r["cross_refs"] if x["target_id"]]
+        problems["dangling paragraph links"] += sum(1 for i in links if i not in ids)
+        problems["dangling table_ids"] += sum(1 for i in r["table_ids"] if i not in table_ids)
+    for t in tables:
+        problems["dangling table owner / entry ids"] += sum(
+            1 for i in (t["owner_paragraph_id"], t["table_entry_id"]) if i and i not in ids)
+        problems["broken table source_line_ids"] += sum(1 for i in t["source_line_ids"] if i not in known_lines)
+    for d in defs:
+        problems["dangling definition paragraph ids"] += d["paragraph_id"] not in ids
+    return dict(problems)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--expected", default=str(ROOT / "cases" / "dev-rear-lamp" / "expected.json"))
-    ap.add_argument("--paragraphs", default=str(ROOT / "build" / "paragraphs.jsonl"))
+    ap.add_argument("--build", default=str(ROOT / "build"), help="folder with paragraphs.jsonl, pages.jsonl, ...")
     args = ap.parse_args(argv)
+    build = Path(args.build)
 
     expected = json.loads(Path(args.expected).read_text(encoding="utf-8"))["requirements"]
-    records = [json.loads(l) for l in Path(args.paragraphs).read_text(encoding="utf-8").splitlines() if l.strip()]
-    records = [r for r in records if r["role"] == "base"]
+    records = read_jsonl(build / "paragraphs.jsonl")
+    pages = read_jsonl(build / "pages.jsonl")
+    tables = read_jsonl(build / "tables.jsonl")
+    defs = read_jsonl(build / "definitions.jsonl")
+    if not records or not pages:
+        print(f"error: {build}/paragraphs.jsonl or pages.jsonl missing or empty; run src/indexer.py", file=sys.stderr)
+        return 1
 
-    # our index: (regulation, key) -> records; (regulation, page) -> records covering that page
-    by_label: dict[tuple, list[dict]] = defaultdict(list)
-    by_page: dict[tuple, list[dict]] = defaultdict(list)
+    by_key: dict[tuple, list[dict]] = defaultdict(list)
     for r in records:
-        by_label[(r["regulation"], paragraph_key(r["paragraph"]))].append(r)
-        for p in range(r["page"], r["page_end"] + 1):
-            by_page[(r["regulation"], p)].append(r)
+        by_key[(r["regulation"], r["version"], _paragraph_key(r["paragraph"]))].append(r)
 
-    # distinct expected pairs: (regulation, key) -> expected page, label, texts, version
+    # distinct expected (regulation, version, key) -> label, cited pages
     pairs: dict[tuple, dict] = {}
     for req in expected:
         s = req["source"]
-        key = (s["regulation"], paragraph_key(s.get("paragraph")))
-        e = pairs.setdefault(key, {"label": s.get("paragraph"), "page": s["page"], "version": s.get("version"),
-                                   "texts": []})
-        e["page"] = min(e["page"], s["page"])
-        e["texts"].append(req["text"])
+        key = (s["regulation"], s.get("version", ""), _paragraph_key(s.get("paragraph")))
+        e = pairs.setdefault(key, {"label": s.get("paragraph"), "pages": set(), "reqs": 0})
+        e["pages"].add(s["page"])
+        e["reqs"] += 1
 
-    pdf_cache: dict[str, pymupdf.Document] = {}
-
-    def page_text(reg: str, page: int) -> str | None:
-        files = sorted((PDF_DIR / reg.replace(" ", "_") / "base").glob("*.pdf"))
-        if not files:
-            return None
-        path = str(files[0])
-        doc = pdf_cache.setdefault(path, pymupdf.open(path))
-        return doc[page - 1].get_text() if 1 <= page <= len(doc) else None
-
-    found = page_ok = 0
-    misses = []
-    for (reg, key), e in sorted(pairs.items()):
-        hits = by_label.get((reg, key), [])
-        if hits:
-            found += 1
-            if any(abs(h["page"] - e["page"]) <= 1 or h["page"] <= e["page"] <= h["page_end"] for h in hits):
-                page_ok += 1
-            else:
-                misses.append((reg, e, "label found, page wrong: " + ", ".join(str(h["page"]) for h in hits), None))
+    found = exact = near = 0
+    misses, page_misses, found_recs = [], [], []
+    for key, e in sorted(pairs.items()):
+        hits = by_key.get(key, [])
+        if not hits:
+            misses.append((key, e))
             continue
-        text = page_text(reg, e["page"])
-        phrase = text is not None and any(phrase_on_page(t, text) for t in e["texts"])
-        on_page = sorted({r["paragraph"] for r in by_page.get((reg, e["page"]), [])})
-        closest = difflib.get_close_matches(e["label"], on_page, n=1, cutoff=0)
-        status = ("page missing" if text is None else
-                  "label miss, phrase on page" if phrase else "label miss, phrase NOT on page")
-        misses.append((reg, e, status, closest[0] if closest else None))
+        found += 1
+        best = next((h for h in hits if all(h["page"] <= pg <= h["page_end"] for pg in e["pages"])), None)
+        if best is not None:
+            exact += 1
+        elif any(all(h["page"] - 1 <= pg <= h["page_end"] + 1 for pg in e["pages"]) for h in hits):
+            near += 1
+            page_misses.append((key, e, hits, "within +/-1"))
+        else:
+            page_misses.append((key, e, hits, "page differs"))
+        found_recs.append(best or hits[0])
 
     n = len(pairs)
-    by_page_with_phrase = sum(1 for _, _, s, _ in misses if s == "label miss, phrase on page")
-    print(f"Expected: {len(expected)} requirements, {n} distinct (regulation, paragraph) pairs")
-    print(f"Found by label:                    {found:>4} / {n}  ({found / n:.1%})")
-    print(f"  ... with page within +/-1:       {page_ok:>4} / {found}")
-    print(f"Not found by label:                {n - found:>4}")
-    print(f"  ... page exists + phrase on it:  {by_page_with_phrase:>4}")
-    print(f"  ... page exists, phrase missing: {sum(1 for _, _, s, _ in misses if s.endswith('NOT on page')):>4}")
-    print(f"  ... page missing:                {sum(1 for _, _, s, _ in misses if s == 'page missing'):>4}")
-    ok = found + by_page_with_phrase
-    print(f"Found by label OR by page+phrase:  {ok:>4} / {n}  ({ok / n:.1%})")
+    print(f"Expected: {len(expected)} requirements, {n} distinct (regulation, version, paragraph) pairs")
+    print(f"Found (regulation + version + key):  {found:>4} / {n}  ({found / n:.1%})")
+    print(f"  ... page exact (within page..page_end): {exact:>4} / {found}")
+    print(f"  ... only within +/-1 (diagnostic):      {near:>4}")
+    print(f"  ... page differs:                       {found - exact - near:>4}")
 
-    print("\nPer regulation (base version):")
-    print(f"  {'regulation':<10} {'expert reqs':>11} {'expert paras':>13} {'our paras':>10} {'our shall paras':>16}"
-          f" {'found':>6}")
-    for reg in sorted({k[0] for k in pairs}):
-        reqs = sum(1 for q in expected if q["source"]["regulation"] == reg)
-        exp_p = sum(1 for k in pairs if k[0] == reg)
-        ours = [r for r in records if r["regulation"] == reg]
-        shall = sum(1 for r in ours if r["shall_count"])
-        f = sum(1 for k in pairs if k[0] == reg and by_label.get(k))
-        print(f"  {reg:<10} {reqs:>11} {exp_p:>13} {len(ours):>10} {shall:>16} {f:>6}")
+    no_ob = [r for r in found_recs if not r["has_obligation"]]
+    print("\nStructure of the found expected paragraphs:")
+    print(f"  with a title:                           {sum(1 for r in found_recs if r['title']):>4} / {found}")
+    print(f"  with a non-empty breadcrumb:            {sum(1 for r in found_recs if r['breadcrumb']):>4} / {found}")
+    print(f"  with a title or breadcrumb:             "
+          f"{sum(1 for r in found_recs if r['title'] or r['breadcrumb']):>4} / {found}")
+    print(f"  without an obligation signal:           {len(no_ob):>4}")
+    print(f"    ... inherits_obligation:              {sum(1 for r in no_ob if r['inherits_obligation']):>4}")
+    print(f"    ... heading_value_item:               {sum(1 for r in no_ob if r['heading_value_item']):>4}")
+    print(f"    ... either of the two:                "
+          f"{sum(1 for r in no_ob if r['inherits_obligation'] or r['heading_value_item']):>4}")
+    print(f"    ... neither:                          "
+          f"{sum(1 for r in no_ob if not (r['inherits_obligation'] or r['heading_value_item'])):>4}"
+          + ("  " + ", ".join(f"{r['regulation']} {r['paragraph']}" for r in no_ob
+                              if not (r['inherits_obligation'] or r['heading_value_item'])) if no_ob else ""))
 
-    print(f"\nMisses ({len(misses)}):")
-    for reg, e, status, closest in misses:
-        print(f"  {reg:<8} {e['label']!s:<28} page {e['page']:>3}  {status}"
-              + (f"  | closest on page: {closest}" if closest else ""))
-    return 0
+    problems = integrity(records, pages, tables, defs)
+    print("\nIntegrity (all must be 0):")
+    for name, count in problems.items():
+        print(f"  {name:<40} {count:>6}{'' if count == 0 else '   <-- FAIL'}")
+
+    print("\nPer regulation:")
+    print(f"  {'regulation':<10} {'version':<8} {'expert reqs':>11} {'expert paras':>13} {'our paras':>10}"
+          f" {'our shall paras':>16} {'found':>6} {'exact':>6}")
+    for reg, ver in sorted({k[:2] for k in pairs}):
+        keys = [k for k in pairs if k[:2] == (reg, ver)]
+        ours = [r for r in records if r["regulation"] == reg and r["version"] == ver]
+        f = [k for k in keys if by_key.get(k)]
+        x = sum(1 for k in f if any(all(h["page"] <= pg <= h["page_end"] for pg in pairs[k]["pages"])
+                                    for h in by_key[k]))
+        print(f"  {reg:<10} {ver:<8} {sum(pairs[k]['reqs'] for k in keys):>11} {len(keys):>13} {len(ours):>10}"
+              f" {sum(1 for r in ours if r['shall_count']):>16} {len(f):>6} {x:>6}")
+
+    if misses:
+        print(f"\nNot found ({len(misses)}):")
+        for (reg, ver, _), e in misses:
+            print(f"  {reg} {ver}  {e['label']!s:<28} pages {sorted(e['pages'])}")
+    if page_misses:
+        print(f"\nFound, page not exact ({len(page_misses)}):")
+        for (reg, ver, _), e, hits, why in page_misses:
+            spans = ", ".join(f"{h['page']}-{h['page_end']}" for h in hits)
+            print(f"  {reg} {ver}  {e['label']!s:<28} expected {sorted(e['pages'])}  ours {spans}  ({why})")
+
+    failed = found < n or any(problems.values())
+    print(f"\n{'FAIL' if failed else 'OK'}: coverage {found}/{n}, integrity problems {sum(problems.values())}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
