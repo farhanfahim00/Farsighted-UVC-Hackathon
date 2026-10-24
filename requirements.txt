@@ -1,0 +1,5 @@
+jsonschema
+pymupdf
+anthropic
+python-dotenv
+streamlit
