@@ -145,7 +145,7 @@ def classify(k, extracted: dict, candidates: set, decisions: dict, kept: set[str
         return "judged_not_applicable", f"{row.get('category')}/{row.get('confidence')}: {row.get('reason', '')}"
     if row["requirements"]:
         f = export_filter(row, kept)
-        return "filtered_by_export", f or "unknown (not filtered by the v2_e switches)"
+        return "filtered_by_export", f or f"excluded:{row.get('category')}/{row.get('confidence')}"
     return "empty_output", f"{row.get('category')}/{row.get('confidence')}: {row.get('reason', '')}"
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Run stages 2-6 for one case folder: profile, scope screening (3, then 3b overlap), section selection,
-extraction, faithfulness check, export.
+"""Run stages 2-6 for one case folder: profile, scope screening (3, then 3b overlap), section selection (4, 4b
+sub-sections), extraction, faithfulness check, second-opinion review (5c), export.
 
     python src/run_case.py cases/dev-rear-lamp            # skips a stage whose output already exists
     python src/run_case.py cases/dev-rear-lamp --force    # redo both (API responses still come from build/cache/)
@@ -21,10 +21,12 @@ from llm import LLMFailure
 from product_profile import build_profile
 from overlap import find_overlaps, print_result
 from screen_regulations import screen_case
-from select_sections import print_counts, select_case
+from select_sections import print_counts, select_case, select_subsections_case
 from extract import extract_case, summarize
 from export import export_case
 from faithfulness import check_case
+from export import REVIEW_FILES
+from review_medium import review_case
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
             print_counts(select_case(case_dir.name))
         else:
             print("[stage 4] skipped (candidates.jsonl exists; use --force)")
+        if config.SUBSECTION_FILTER and (args.force or not (out_dir / "subsections.json").is_file()):
+            print("[stage 4b] sub-section selection (both SPEC_LISTS_COMPLETE settings)")
+            select_subsections_case(case_dir.name)
+        elif config.SUBSECTION_FILTER:
+            print("[stage 4b] skipped (subsections.json exists; use --force)")
         if args.force or not (out_dir / "extracted.jsonl").is_file():
             print("[stage 5] extraction")
             summarize(extract_case(case_dir.name))
@@ -71,6 +78,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  checked {len(res['results'])} requirements, changed {sum(x['changed'] for x in res['results'])}")
         elif config.FAITHFULNESS_CHECK:
             print("[stage 5b] skipped (faithfulness.jsonl exists; use --force)")
+        if config.REVIEW_ALL or config.REVIEW_MEDIUM or config.REVIEW_INSTEAD_OF_CATEGORY_DROP or config.REVIEW_LOW_CONFIDENCE:
+            prompt = "criteria" if config.REVIEW_ALL else config.REVIEW_PROMPT
+            print(f"[stage 5c] second-opinion review (prompt {prompt}; asks only for items without a review)")
+            print(f"  {review_case(case_dir.name, prompt)}")
+            if config.REVIEW_ALL and config.REVIEW_BORDERLINE_TWICE:
+                print(f"  pass 2: {review_case(case_dir.name, 'criteria_pass2')}")
         if args.force or not (out_dir / "submission.json").is_file():
             print("[stage 6] export")
             export_case(case_dir.name)

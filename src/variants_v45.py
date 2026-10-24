@@ -8,6 +8,7 @@
   v4_b  v3 + sub-section filter, SPEC_LISTS_COMPLETE = True
   v5_a  v4_a + second-opinion drop (probability < config.REVIEW_DROP_BELOW)
   v5_b  v4_b + second-opinion drop
+  v6_a  v5_a + SCREEN_EXCLUDE_VEHICLE_LEVEL (regulations screened as vehicle_level_not_component are left out)
 
 Writes build/cases/<case_id>/submission_<variant>.json (v3 is only compared, not rewritten), validates each with
 tools/validate.py, and prints requirement counts, scores, and the expected paragraphs each variant loses against v3.
@@ -34,6 +35,7 @@ VARIANTS = {
     "v4_b": {"subsection_filter": True, "spec_lists_complete": True, "review_medium": False},
     "v5_a": {"subsection_filter": True, "spec_lists_complete": False, "review_medium": True},
     "v5_b": {"subsection_filter": True, "spec_lists_complete": True, "review_medium": True},
+    "v6_a": {"subsection_filter": True, "spec_lists_complete": False, "review_medium": True, "exclude_vehicle_level": True},
 }
 
 

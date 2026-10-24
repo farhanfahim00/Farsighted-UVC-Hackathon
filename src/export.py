@@ -54,14 +54,28 @@ def load_deselected(case_id: str, spec_lists_complete: bool) -> dict[str, list[d
     return {reg: [{"id": i, **s} for i, s in c["subsections"].items() if not s["relevant"]] for reg, c in data.items()}
 
 
-def load_review(case_id: str) -> dict[tuple[str, int], int]:
-    """{(paragraph id, requirement index): probability 0-100} from review_medium.jsonl."""
-    path = config.CASES_BUILD / case_id / "review_medium.jsonl"
+REVIEW_FILES = {"basic": "review_medium.jsonl", "criteria": "review_medium_criteria.jsonl",
+                "criteria_pass2": "review_medium_criteria_pass2.jsonl"}
+
+
+def read_review_file(path: Path) -> dict[tuple[str, int], int]:
     out = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line:
             r = json.loads(line)
             out[(r["id"], r["index"])] = r["probability"]
+    return out
+
+
+def load_review(case_id: str, prompt: str | None = None, twice: bool = False) -> dict[tuple[str, int], float]:
+    """{(paragraph id, requirement index): probability 0-100} from the review file of the prompt (config.REVIEW_PROMPT).
+    twice: an item that also has a second review (criteria_pass2.jsonl) gets the mean of the two."""
+    d = config.CASES_BUILD / case_id
+    out: dict = read_review_file(d / REVIEW_FILES[prompt or config.REVIEW_PROMPT])
+    if twice:
+        for key, p2 in read_review_file(d / REVIEW_FILES["criteria_pass2"]).items():
+            if key in out:
+                out[key] = (out[key] + p2) / 2
     return out
 
 
@@ -72,7 +86,8 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
                      corrections: dict[tuple[str, int], str] | None = None,
                      deselected: dict[str, list[dict]] | None = None,
                      review: dict[tuple[str, int], int] | None = None, review_below: int = 0,
-                     trace: list | None = None) -> tuple[dict, dict]:
+                     trace: list | None = None, review_category_medium: bool = False,
+                     review_low: bool = False, review_log: list | None = None, review_all: bool = False) -> tuple[dict, dict]:
     """(submission dict, stats). rows are extracted.jsonl lines; records maps paragraph id -> index record.
     corrections: {(paragraph id, requirement index): corrected text} from faithfulness.py, replacing the extracted text.
     keep: only these regulations (None = all). Paragraphs below min_confidence, in drop_categories, or in
@@ -80,18 +95,33 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
     a row without confidence or category (older extraction) is never filtered.
     deselected: sub-sections (select_sections.in_subsection) whose requirements are left out.
     review: {(paragraph id, index): probability}; a reviewed requirement below review_below is left out.
-    trace: if a list, gets (paragraph id, requirement index, exported text, confidence) for every requirement kept."""
+    trace: if a list, gets (paragraph id, requirement index, exported text, confidence, category) for every requirement kept.
+    review_category_medium: medium-confidence rows in drop_unless_high are reviewed instead of dropped.
+    review_low: rows below min_confidence are reviewed instead of dropped (and are then not dropped by drop_unless_high).
+    review_all: every row is reviewed; no confidence floor, no category rules.
+    A row is "reviewed" when it is one of those two kinds or (review given) has medium confidence; a requirement without a
+    review for a row of the first two kinds raises KeyError (run review_medium.py). review_log gets one dict per
+    reviewed requirement: id, index, category, confidence, probability, kept."""
     stats = Counter()
     reqs, seen = [], set()
     floor = CONFIDENCE_RANK[min_confidence]
     for row in rows:
         if row["regulation"] in exclude or not row["requirements"] or (keep is not None and row["regulation"] not in keep):
             continue
-        if CONFIDENCE_RANK.get(row.get("confidence"), 2) < floor:
-            stats["left_out_by_confidence"] += len(row["requirements"])
-            continue
-        if row.get("category") in drop_categories or (row.get("category") in drop_unless_high
-                                                       and row.get("confidence") != "high"):
+        must_review = review_all             # a row that would have been dropped but goes to the second opinion
+        if review_all:
+            pass
+        elif CONFIDENCE_RANK.get(row.get("confidence"), 2) < floor:
+            if not review_low:
+                stats["left_out_by_confidence"] += len(row["requirements"])
+                continue
+            must_review = True
+        elif row.get("category") in drop_unless_high and row.get("confidence") != "high":
+            if not (review_category_medium and row.get("confidence") == "medium"):
+                stats["left_out_by_category"] += len(row["requirements"])
+                continue
+            must_review = True
+        if not review_all and row.get("category") in drop_categories:
             stats["left_out_by_category"] += len(row["requirements"])
             continue
         rec = records[row["id"]]
@@ -102,16 +132,24 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
             if corrections and (row["id"], i) in corrections:
                 stats["faithfulness_corrected"] += 1
                 text = corrections[(row["id"], i)]
-            if review and review.get((row["id"], i), 100) < review_below:
-                stats["left_out_by_review"] += 1
-                continue
+            if review is not None and (must_review or row.get("confidence") == "medium"):
+                if must_review and (row["id"], i) not in review:
+                    raise KeyError(f"no review for {row['id']} #{i}; run review_medium.py")
+                prob = review.get((row["id"], i), 100)
+                if review_log is not None:
+                    review_log.append({"id": row["id"], "index": i, "category": row.get("category"),
+                                       "confidence": row.get("confidence"), "probability": prob,
+                                       "kept": prob >= review_below})
+                if prob < review_below:
+                    stats["left_out_by_review"] += 1
+                    continue
             text = " ".join(text.split())
             if not text or (row["id"], text) in seen:
                 stats["duplicates_removed"] += bool(text)
                 continue
             seen.add((row["id"], text))
             if trace is not None:
-                trace.append((row["id"], i, text, row.get("confidence")))
+                trace.append((row["id"], i, text, row.get("confidence"), row.get("category")))
             if len(text) > MAX_TEXT:
                 stats["truncated"] += 1
                 text = clip(text)
@@ -129,26 +167,39 @@ def make_submission(case_id: str, *, exclude: list[str] | None = None, unknown_p
                     drop_unless_high: set[str] | None = None,
                     faithfulness: bool | None = None, subsection_filter: bool | None = None,
                     spec_lists_complete: bool | None = None, review_medium: bool | None = None,
-                    trace: list | None = None) -> tuple[dict, dict]:
+                    exclude_vehicle_level: bool | None = None, vehicle_category_check: bool | None = None,
+                    review_instead: bool | None = None, review_low: bool | None = None,
+                    review_prompt: str | None = None, trace: list | None = None,
+                    review_log: list | None = None, review_all: bool | None = None,
+                    review_twice: bool | None = None) -> tuple[dict, dict]:
     """The submission for a case under the given switches (None = the value in config.py). No API calls.
     faithfulness: use the corrected texts of faithfulness.jsonl (default config.FAITHFULNESS_CHECK)."""
     out_dir = config.CASES_BUILD / case_id
     rows = [json.loads(l) for l in (out_dir / "extracted.jsonl").read_text(encoding="utf-8").splitlines() if l]
     by_reg = load_base_records({r["regulation"] for r in rows})
     records = {r["id"]: r for recs in by_reg.values() for r in recs}
-    keep = set(kept_regulations(case_id, unknown_policy=unknown_policy, drop_overlap=drop_overlap))
+    keep = set(kept_regulations(case_id, unknown_policy=unknown_policy, drop_overlap=drop_overlap,
+                                 exclude_vehicle_level=exclude_vehicle_level,
+                                 vehicle_category_check=vehicle_category_check))
     use_faithfulness = config.FAITHFULNESS_CHECK if faithfulness is None else faithfulness
     corrections = load_corrections(case_id, rows) if use_faithfulness else None
     complete = config.SPEC_LISTS_COMPLETE if spec_lists_complete is None else spec_lists_complete
     deselected = (load_deselected(case_id, complete)
                   if (config.SUBSECTION_FILTER if subsection_filter is None else subsection_filter) else None)
-    review = load_review(case_id) if (config.REVIEW_MEDIUM if review_medium is None else review_medium) else None
+    instead = config.REVIEW_INSTEAD_OF_CATEGORY_DROP if review_instead is None else review_instead
+    low = config.REVIEW_LOW_CONFIDENCE if review_low is None else review_low
+    every = config.REVIEW_ALL if review_all is None else review_all
+    twice = every and (config.REVIEW_BORDERLINE_TWICE if review_twice is None else review_twice)
+    use_review = (config.REVIEW_MEDIUM if review_medium is None else review_medium) or instead or low or every
+    review = load_review(case_id, "criteria" if every else review_prompt, twice) if use_review else None
     return build_submission(rows, records, case_id, set(exclude or []), keep=keep,
                             min_confidence=min_confidence or config.MIN_CONFIDENCE,
                             drop_categories=config.DROP_CATEGORIES if drop_categories is None else drop_categories,
                             drop_unless_high=(config.DROP_CATEGORIES_UNLESS_HIGH if drop_unless_high is None
                                               else drop_unless_high), corrections=corrections,
-                            deselected=deselected, review=review, review_below=config.REVIEW_DROP_BELOW, trace=trace)
+                            deselected=deselected, review=review, review_below=config.REVIEW_DROP_BELOW, trace=trace,
+                            review_category_medium=instead, review_low=low, review_log=review_log,
+                            review_all=every)
 
 
 def run_tool(script: str, *args: str) -> subprocess.CompletedProcess:

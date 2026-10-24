@@ -193,11 +193,14 @@ class Run:
         return answers
 
 
-def extract_case(case_id: str, out_dir: Path | None = None) -> dict:
+def extract_case(case_id: str, out_dir: Path | None = None, only: set[str] | None = None) -> dict:
+    """only: extract just the candidates of these regulations (partial run; extracted.jsonl then holds only those)."""
     out_dir = out_dir or config.CASES_BUILD / case_id
     profile = json.loads((out_dir / "profile.json").read_text(encoding="utf-8"))
     profile = {k: v for k, v in profile.items() if k != "meta"}
     candidates = [json.loads(l) for l in (out_dir / "candidates.jsonl").read_text(encoding="utf-8").splitlines() if l]
+    if only:
+        candidates = [c for c in candidates if c["regulation"] in only]
     regs = {c["regulation"] for c in candidates}
     by_reg = load_base_records(regs)
     by_id = {r["id"]: r for recs in by_reg.values() for r in recs}
@@ -261,9 +264,10 @@ def summarize(res: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("case_dir")
+    ap.add_argument("--only", help="comma-separated regulations: extract just these (partial run)")
     args = ap.parse_args(argv)
     try:
-        res = extract_case(Path(args.case_dir).name)
+        res = extract_case(Path(args.case_dir).name, only=set(args.only.split(",")) if args.only else None)
     except (OSError, LLMFailure) as exc:
         print(f"error: extraction failed: {exc}", file=sys.stderr)
         return 1

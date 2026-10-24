@@ -8,7 +8,13 @@ You decide whether one regulation applies to a product. You get the product prof
 - Use only the profile and the scope text given. Do not rely on what you remember about this regulation's content beyond its title and scope.
 
 ## Fields
-- applies: "yes" or "no".
+- applies: "yes" or "no", decided only by the decision rule above. The relation field below never changes it.
+- relation: exactly one of
+  - outside_scope: the scope does not cover this kind of product or vehicle.
+  - vehicle_level_not_component: the regulation governs the vehicle as a whole, and its requirements fall on the vehicle manufacturer or on whole-vehicle approval, not on this component as supplied.
+  - insufficient_evidence: it might apply, but the profile does not say enough.
+  - applies: it applies to the product itself or to its installation.
+  Choose the one that best describes how the regulation relates to this product, whatever you answered for applies (for example, a regulation kept for recall can still be vehicle_level_not_component).
 - confidence: high, medium or low.
 - level: product_itself (the product is what the regulation approves), installation_on_vehicle (the regulation sets how the product is fitted to or must behave on a vehicle), or cross_cutting (general requirements such as electromagnetic compatibility, materials, or markings that apply to products of many kinds).
 - depends_on: the profile fact features (copied exactly as written in the profile) that your decision rests on, for yes and for no. Empty if the decision rests on the product kind alone.

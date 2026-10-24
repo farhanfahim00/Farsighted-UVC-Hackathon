@@ -1,5 +1,6 @@
 """Shared settings for the pipeline stages (profile, scope screening, export). Change values here, not in the stages."""
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,51 @@ SUBSECTION_FILTER = True
 # False: a device or function that is "unknown" in the profile keeps its sub-section. True: with an explicit list of
 # functions / parts in the materials, what is not on the list counts as absent (for this decision only).
 SPEC_LISTS_COMPLETE = False
-# Second opinion on medium-confidence requirements (review_medium.jsonl): off by default, used by variants v5_*.
-REVIEW_MEDIUM = False
+# Second opinion on medium-confidence requirements (review_medium.jsonl). On = the v5_a behaviour (the default).
+REVIEW_MEDIUM = True
 REVIEW_DROP_BELOW = 15                 # fixed, not tuned: drop a reviewed requirement with probability (0-100) below this
+
+# ---- screening diagnostics (src/screen_regulations.py, regulation_set.py) ---------------------------------------------
+# True: a regulation whose screening relation is "vehicle_level_not_component" (it governs the vehicle as a whole, not
+# this component as supplied) is excluded from the kept regulations. False: relation is recorded only.
+SCREEN_EXCLUDE_VEHICLE_LEVEL = False
+
+# ---- v7: review instead of blanket drops, review prompt, vehicle category check -----------------------------------------
+# All default to the v5_a behaviour. Reviewed items keep when probability >= REVIEW_DROP_BELOW (fixed, never tuned).
+REVIEW_INSTEAD_OF_CATEGORY_DROP = False   # medium-confidence items in DROP_CATEGORIES_UNLESS_HIGH are reviewed, not dropped
+REVIEW_LOW_CONFIDENCE = False             # low-confidence items (below MIN_CONFIDENCE) are reviewed, not dropped
+REVIEW_PROMPT = "basic"                   # "basic" (review_system.md) or "criteria" (review_criteria_system.md)
+# Screening post-processing, no API call: a regulation whose scope text explicitly limits it to vehicle categories none of
+# which the profile's categories belong to is set to applies = no ("vehicle category mismatch"). Off until checked on dev.
+VEHICLE_CATEGORY_CHECK = False
+
+# ---- v8: uniform review ----------------------------------------------------------------------------------------------
+# REVIEW_ALL: every extracted item that applies (any confidence, any category) is reviewed with the criteria prompt and kept
+# only if probability >= REVIEW_DROP_BELOW; no confidence floor, no category rules.
+REVIEW_ALL = False
+# REVIEW_BORDERLINE_TWICE (on top of REVIEW_ALL): an item whose first probability is 10-40 gets a second independent review
+# (same prompt, request differs only in a neutral "Review pass 2." line); the mean of the two is used.
+REVIEW_BORDERLINE_TWICE = False
+BORDERLINE_RANGE = (10, 40)
+
+# ---- presets ---------------------------------------------------------------------------------------------------------
+# FARSIGHTED_PRESET=v5_a|v7_a|v7_b|v7_c|v8_a|v8_b python src/run_case.py ...   sets the switches above; unset = v7_c.
+PRESETS = {
+    "v5_a": {},
+    "v7_a": {"REVIEW_INSTEAD_OF_CATEGORY_DROP": True},
+    "v7_b": {"REVIEW_INSTEAD_OF_CATEGORY_DROP": True, "REVIEW_LOW_CONFIDENCE": True},
+    "v7_c": {"REVIEW_INSTEAD_OF_CATEGORY_DROP": True, "REVIEW_LOW_CONFIDENCE": True, "REVIEW_PROMPT": "criteria"},
+    "v8_a": {"REVIEW_ALL": True, "REVIEW_PROMPT": "criteria"},
+    "v8_b": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria"},
+}
+PRESET = os.environ.get("FARSIGHTED_PRESET", "v7_c")        # the default preset
+if PRESET not in PRESETS:
+    raise SystemExit(f"error: FARSIGHTED_PRESET={PRESET!r} is not one of {sorted(PRESETS)}")
+globals().update(PRESETS[PRESET])
+
+# FARSIGHTED_OVERRIDES="REVIEW_MEDIUM=0,SUBSECTION_FILTER=0" overrides single switches (bool: 0/1/true/false; other: text).
+for _item in filter(None, os.environ.get("FARSIGHTED_OVERRIDES", "").split(",")):
+    _key, _, _val = _item.partition("=")
+    if _key not in globals() or _key.startswith("_") or not _val:
+        raise SystemExit(f"error: FARSIGHTED_OVERRIDES: unknown switch or empty value in {_item!r}")
+    globals()[_key] = (_val.lower() in ("1", "true", "yes")) if isinstance(globals()[_key], bool) else _val

@@ -30,8 +30,10 @@ WORKERS = 6
 
 S = {"type": "string"}
 LIST_S = {"type": "array", "items": S}
+RELATIONS = ["outside_scope", "vehicle_level_not_component", "insufficient_evidence", "applies"]
 DECISION_SCHEMA = object_schema({
     "applies": {"type": "string", "enum": ["yes", "no"]},
+    "relation": {"type": "string", "enum": RELATIONS},
     "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
     "level": {"type": "string", "enum": ["product_itself", "installation_on_vehicle", "cross_cutting"]},
     "depends_on": LIST_S,
@@ -86,7 +88,7 @@ def clean_decision(reg: dict, raw: dict | None, failure: str | None, profile: di
                    known_names: set[str]) -> dict:
     """One decision record. `raw` is the model's answer (None after a failed call)."""
     d = {"regulation": reg["regulation"], "title": reg["title"], "version": reg["version"], "role": config.CITE_ROLE,
-         "applies": None, "model_applies": None, "confidence": "low", "level": "product_itself", "depends_on": [],
+         "applies": None, "model_applies": None, "relation": None, "confidence": "low", "level": "product_itself", "depends_on": [],
          "depends_only_on_uncertain": False, "supersession_note": "", "supersedes": [], "superseded_by": [],
          "reason": "", "decision_source": "model", "notes": [], "failure": failure}
     if reg["version"] is None:
@@ -96,7 +98,7 @@ def clean_decision(reg: dict, raw: dict | None, failure: str | None, profile: di
         return d
     statuses = feature_statuses(profile)
     d["model_applies"] = d["applies"] = raw["applies"] == "yes"
-    d.update(confidence=raw["confidence"], level=raw["level"], reason=" ".join(raw["reason"].split()),
+    d.update(relation=raw["relation"], confidence=raw["confidence"], level=raw["level"], reason=" ".join(raw["reason"].split()),
              supersession_note=" ".join(raw["supersession_note"].split()))
     # depends_on: keep the profile's own feature names; report names the profile does not contain
     matched, unmatched = [], []
@@ -152,6 +154,54 @@ def apply_supersession(decisions: list[dict]) -> None:
             o["notes"].append(f"dropped: replaced by {newer} for the same devices "
                               f"({n['supersession_note'] or o['supersession_note'] or 'scope says so'})")
             n["notes"].append(f"kept over {older}, which it replaces")
+
+
+CATEGORY_TOKEN = re.compile(r"(?<![A-Za-z0-9])([LMNOTRS]\d?[A-G]?)(?![A-Za-z])")
+CATEGORY_PHRASE = re.compile(r"\bcategor(?:y|ies)\s+", re.I)
+CATEGORY_SEP = re.compile(r"(?:\s*(?:,|;|\band\b|\bor\b|\bto\b|-|–|/)\s*|\s+)+")
+NEGATION = re.compile(r"\b(?:not\s+apply|does\s+not|do\s+not|shall\s+not\s+apply|except|excluding|exclud\w*|other\s+than|exempt\w*)\b", re.I)
+
+
+def scope_categories(scope_text: str) -> set[str] | None:
+    """Vehicle categories a scope text explicitly limits the regulation to ("vehicles of categories L, M, N, O and T"),
+    or None when the text names none or is ambiguous (a category phrase inside a sentence with an exclusion)."""
+    found: set[str] = set()
+    for sentence in re.split(r"(?<=[.;:])\s+(?=[A-Z0-9])", scope_text):
+        for m in CATEGORY_PHRASE.finditer(sentence):
+            pos, tokens = m.end(), []
+            while True:
+                t = CATEGORY_TOKEN.match(sentence, pos)
+                if not t:
+                    break
+                tokens.append(t.group(1))
+                pos = t.end()
+                sep = CATEGORY_SEP.match(sentence, pos)
+                if not sep:
+                    break
+                pos = sep.end()
+            if tokens and NEGATION.search(sentence):
+                return None
+            found.update(tokens)
+    return found or None
+
+
+def category_overlap(scope_cats: set[str], product_cats: set[str]) -> bool:
+    """A scope category covers a product category when equal or when one is the other's class prefix (M covers M1)."""
+    return any(s == p or p.startswith(s) or s.startswith(p) for s in scope_cats for p in product_cats)
+
+
+def apply_vehicle_category_check(decisions: list[dict], profile: dict, scopes: dict) -> None:
+    """Explicit category mismatch (scope limited to categories the product is not in) -> applies = no, outside_scope."""
+    product = {t for c in profile.get("vehicle_categories", []) for t in CATEGORY_TOKEN.findall(c)}
+    if not product:
+        return
+    for d in decisions:
+        if not d["applies"]:
+            continue
+        cats = scope_categories(scopes.get(d["regulation"], {}).get("text", ""))
+        if cats and not category_overlap(cats, product):
+            d.update(applies=False, relation="outside_scope", decision_source="vehicle_category")
+            d["notes"].append(f"dropped: vehicle category mismatch (scope limited to {sorted(cats)}, product {sorted(product)})")
 
 
 def order(decisions: list[dict]) -> list[dict]:
