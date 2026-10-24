@@ -74,6 +74,11 @@ PROMPT_CACHING = True                     # cache_control on the system prompt a
 SKIP_DESELECTED_BEFORE_EXTRACTION = False # extraction skips candidates inside sub-sections deselected for export (needs subsections.json)
 VEHICLE_CATEGORY_USE_PRIMARY = False      # category check uses the stated "vehicle category" fact, not categories named in remarks
 
+# ---- v10: rationale parts -----------------------------------------------------------------------------------------------
+# Export drops requirements from parts of a regulation that only explain it: a section whose heading says "technical
+# rationale", "justification" etc. (and everything that belongs to it). Default on; no API call, export only.
+DROP_RATIONALE_PARTS = True
+
 # ---- presets ---------------------------------------------------------------------------------------------------------
 # FARSIGHTED_PRESET=v5_a|v7_a|v7_b|v7_c|v8_a|v8_b python src/run_case.py ...   sets the switches above; unset = v8_b (v8_b_lean = v8_b + cost cuts).
 PRESETS = {
@@ -87,7 +92,8 @@ PRESETS = {
     # v8_b with every cost cut: same exported requirements (faithfulness off: it did not change platform scores)
     "v8_b_lean": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria",
                   "SKIP_DESELECTED_BEFORE_EXTRACTION": True, "FAITHFULNESS_CHECK": False,
-                  "VEHICLE_CATEGORY_CHECK": True, "VEHICLE_CATEGORY_USE_PRIMARY": True},
+                  "VEHICLE_CATEGORY_CHECK": True, "VEHICLE_CATEGORY_USE_PRIMARY": True,
+                  "DROP_RATIONALE_PARTS": True},
 }
 PRESET = os.environ.get("FARSIGHTED_PRESET", "v8_b")        # the default preset
 if PRESET not in PRESETS:

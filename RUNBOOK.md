@@ -43,7 +43,7 @@ whole-vehicle regulation kept for an exterior part is expected; do NOT turn on `
 | `v8_a` | `REVIEW_ALL` (criteria prompt) | every extracted item reviewed, any confidence or category, kept at probability >= 15; no floor, no category rules |
 | `v8_b` | v8_a + `REVIEW_BORDERLINE_TWICE` | items with a first probability of 10-40 get a second review (request differs by a "Review pass 2." line); the mean decides (default; platform on dev: 404 req, P 39.6%, R 84.2%, F2 68.7%) |
 | `v8_c` | v8_b + `SPEC_LISTS_COMPLETE = True` | sub-sections for devices/functions not on an explicit list in the materials are dropped too. Dev: 403 req (1 fewer than v8_b), judge F2 .660 vs .659: no gain. **Not recommended for a bumper**: on the synthetic bumper it drops 88 more sub-sections, including pedestrian headform tests, the AEBS pedestrian test, sensor EMC clauses and the number-plate lamp clauses. Needs no new calls if `subsections.json` exists (it holds both settings). |
-| `v8_b_lean` | v8_b + cost cuts | same exported requirements as v8_b, but: no extraction of candidates inside sub-sections the export drops anyway (`SKIP_DESELECTED_BEFORE_EXTRACTION`), `FAITHFULNESS_CHECK` off, and the vehicle category check on with the primary category (`VEHICLE_CATEGORY_CHECK`, `VEHICLE_CATEGORY_USE_PRIMARY`) |
+| `v8_b_lean` | v8_b + cost cuts | same exported requirements as v8_b, but: no extraction of candidates inside sub-sections the export drops anyway (`SKIP_DESELECTED_BEFORE_EXTRACTION`), `FAITHFULNESS_CHECK` off, `DROP_RATIONALE_PARTS` on (also the default in every preset; export-only, no calls), and the vehicle category check on with the primary category (`VEHICLE_CATEGORY_CHECK`, `VEHICLE_CATEGORY_USE_PRIMARY`) |
 
 Dev result (local judge, requirement level; the judge reads about 0.05 below the platform for v5_a):
 v5_a F2 0.611, v7_a 0.568, v7_b 0.555, v7_c 0.648, v8_a 0.655, **v8_b 0.659** (differences between v7_c, v8_a and v8_b are within noise).
@@ -89,6 +89,31 @@ tokens, so no review saving is assumed.
 
 Rate limits can double the time (earlier dev extraction runs took up to 35 minutes). Opus on the second review pass was not
 built (the diagnosis did not call for it); if ever added it costs about $1 to 2 more. Both presets are far under EUR 50.
+
+## 5b. Measured: cold rehearsal on the synthetic front bumper (2026-10-25, `v8_b_lean`, empty cache)
+Real figures from `build/cache/usage.jsonl` (EUR at $2 / $10, cache read $0.20, cache write $2.50, 0.92), wall-clock from the log:
+
+| Stage | Wall-clock | Calls | EUR |
+|---|---|---|---|
+| 2 profile | 18 s | 1 | 0.03 |
+| 3 screening | 21 s | 56 | 0.35 |
+| 3b overlap | 9 s | 1 | 0.02 |
+| 4 sections | 32 s | 16 | 0.31 |
+| 4b sub-sections | 39 s | 26 | 0.35 |
+| 5 extraction (+ second look) | 355 s | 305 | 5.79 |
+| 5c review pass 1 / pass 2 | 45 s / 19 s | 60 / 25 | 0.68 / 0.26 |
+| 6 export | 1 s | 0 | 0 |
+| **Total** | **539 s (9.0 min)** | **490** | **7.78** |
+
+0 failed calls, 0 truncated (all stop_reason end_turn), 1 batch re-asked for a missing answer, 0 unanswered reviews.
+This is below the section 5 estimate (EUR 10.9 to 16.8, 13 to 21 min). 23 of 56 regulations apply, 16 after overlap (7 dropped),
+4,723 candidates (258 skipped as deselected), 538 extracted, 174 final (v8_b = v8_b_lean export; v8_a 168).
+`export.py --name v8_a|v8_b` with the plain presets demands faithfulness.jsonl; use
+`FARSIGHTED_OVERRIDES="FAITHFULNESS_CHECK=0,VEHICLE_CATEGORY_CHECK=1,VEHICLE_CATEGORY_USE_PRIMARY=1"` to export them from the lean cache.
+
+Rationale filter (`DROP_RATIONALE_PARTS`, export only): requirements from a part whose heading says "technical rationale" /
+"justification" are dropped. Dev v8_a/v8_b exports are byte-identical with it; on the bumper it removes 14 GTR 9 items
+(v8_a 168 -> 154, v8_b 174 -> 160); the operative legform/headform limits (GTR 9 5.1, 5.2, 7.1; R127 5.1, 5.2) stay.
 
 ## 6. Settings that are safe or not for a bumper
 - **v5_a settings drop most test requirements of a collision-test regulation.** On the synthetic bumper, for the

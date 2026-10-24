@@ -40,6 +40,30 @@ MAX_TEXT = 2000                  # README: text is at most 2,000 characters
 DEV_CASE = "dev-rear-lamp"       # the case that has an expected.json for tools/score_local.py
 
 
+RATIONALE_HEADING = re.compile(r"\b(?:technical\s+)?rationale\b|\bjustification\b", re.I)
+
+
+def rationale_ids(by_reg: dict[str, list[dict]]) -> set[str]:
+    """Ids of paragraphs that belong to a part of a regulation that only explains it (no requirements), in document order.
+    A paragraph counts when a heading above it (breadcrumb) says rationale / justification, or when it follows a
+    root section title that does, up to the last paragraph that carries a section label of its own (the sibling
+    sections A, B, VII, ... of that part). Normal paragraph text is never looked at."""
+    out: set[str] = set()
+    for recs in by_reg.values():
+        for i, r in enumerate(recs):
+            if any(RATIONALE_HEADING.search(b) for b in (r.get("breadcrumb") or [])):
+                out.add(r["id"])
+            elif r["kind"] == "title" and r.get("parent_status") == "root" and RATIONALE_HEADING.search(r.get("title") or ""):
+                end = i
+                for k in range(i + 1, len(recs)):
+                    if recs[k]["doc_id"] != r["doc_id"]:
+                        break
+                    if recs[k].get("section"):
+                        end = k
+                out.update(x["id"] for x in recs[i:end + 1])
+    return out
+
+
 def clip(text: str) -> str:
     """At most MAX_TEXT characters, cut at a word boundary."""
     if len(text) <= MAX_TEXT:
@@ -87,7 +111,8 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
                      deselected: dict[str, list[dict]] | None = None,
                      review: dict[tuple[str, int], int] | None = None, review_below: int = 0,
                      trace: list | None = None, review_category_medium: bool = False,
-                     review_low: bool = False, review_log: list | None = None, review_all: bool = False) -> tuple[dict, dict]:
+                     review_low: bool = False, review_log: list | None = None, review_all: bool = False,
+                     rationale: set[str] | None = None) -> tuple[dict, dict]:
     """(submission dict, stats). rows are extracted.jsonl lines; records maps paragraph id -> index record.
     corrections: {(paragraph id, requirement index): corrected text} from faithfulness.py, replacing the extracted text.
     keep: only these regulations (None = all). Paragraphs below min_confidence, in drop_categories, or in
@@ -99,6 +124,7 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
     review_category_medium: medium-confidence rows in drop_unless_high are reviewed instead of dropped.
     review_low: rows below min_confidence are reviewed instead of dropped (and are then not dropped by drop_unless_high).
     review_all: every row is reviewed; no confidence floor, no category rules.
+    rationale: ids of paragraphs in rationale / justification parts (rationale_ids); their requirements are left out.
     A row is "reviewed" when it is one of those two kinds or (review given) has medium confidence; a requirement without a
     review for a row of the first two kinds raises KeyError (run review_medium.py). review_log gets one dict per
     reviewed requirement: id, index, category, confidence, probability, kept."""
@@ -107,6 +133,9 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
     floor = CONFIDENCE_RANK[min_confidence]
     for row in rows:
         if row["regulation"] in exclude or not row["requirements"] or (keep is not None and row["regulation"] not in keep):
+            continue
+        if rationale and row["id"] in rationale:
+            stats["left_out_by_rationale"] += len(row["requirements"])
             continue
         must_review = review_all             # a row that would have been dropped but goes to the second opinion
         if review_all:
@@ -199,7 +228,8 @@ def make_submission(case_id: str, *, exclude: list[str] | None = None, unknown_p
                                               else drop_unless_high), corrections=corrections,
                             deselected=deselected, review=review, review_below=config.REVIEW_DROP_BELOW, trace=trace,
                             review_category_medium=instead, review_low=low, review_log=review_log,
-                            review_all=every)
+                            review_all=every,
+                            rationale=rationale_ids(by_reg) if config.DROP_RATIONALE_PARTS else None)
 
 
 def run_tool(script: str, *args: str) -> subprocess.CompletedProcess:
