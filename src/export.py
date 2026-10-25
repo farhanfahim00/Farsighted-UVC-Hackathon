@@ -64,6 +64,65 @@ def rationale_ids(by_reg: dict[str, list[dict]]) -> set[str]:
     return out
 
 
+_TOKEN = re.compile(r"[^\W_]+(?:[.,][^\W_]+)*", re.U)
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_LIMIT_WORDS = {"not", "no", "min", "minimum", "max", "maximum", "least", "most", "less", "more", "below", "above",
+                "exceed", "exceeds", "exceeding", "within", "between", "only", "all", "any", "each", "every"}
+
+
+_STOP = {"the", "a", "an", "of", "to", "in", "on", "at", "by", "for", "and", "or", "be", "is", "are", "shall", "must", "that",
+         "this", "these", "those", "it", "its", "with", "as", "any", "every", "each", "all", "when", "where", "which", "if",
+         "than", "then", "also", "their", "such", "may"}
+
+
+def _norm_tokens(text: str) -> list[str]:
+    toks = [t.replace(",", ".") for t in _TOKEN.findall(text.lower())]
+    return [t[:-1] if len(t) > 3 and t.endswith("s") and not t.endswith("ss") else t for t in toks]
+
+
+def _fingerprint(text: str) -> dict:
+    toks = _norm_tokens(text)
+    # numbers with the unit token that follows them; limit words as a set
+    nums = []
+    for i, t in enumerate(toks):
+        if _NUMBER.fullmatch(t):
+            nxt = toks[i + 1] if i + 1 < len(toks) and not _NUMBER.fullmatch(toks[i + 1]) else ""
+            nums.append((t, nxt if len(nxt) <= 4 else ""))
+    return {"toks": toks, "set": set(toks), "nums": sorted(nums), "limits": {t for t in toks if t in _LIMIT_WORDS}}
+
+
+def near_duplicates(a: dict, b: dict, threshold: float) -> bool:
+    if a["nums"] != b["nums"] or a["limits"] != b["limits"] or not a["set"] or not b["set"]:
+        return False
+    # more than one content word on one side only (stop lamp vs rear position lamp, narrowband vs broadband) makes it a different requirement
+    small, large = (a, b) if len(a["set"]) <= len(b["set"]) else (b, a)
+    if sum(t not in _STOP and not _NUMBER.fullmatch(t) for t in small["set"] ^ large["set"]) > 1:
+        return False
+    inter = len(a["set"] & b["set"])
+    return inter / len(a["set"] | b["set"]) >= threshold or inter / len(small["set"]) >= threshold
+
+
+def dedup_near_duplicates(entries: list[dict], threshold: float, log: list | None = None) -> list[dict]:
+    """entries: dicts with req, prob, conf, seq. Per regulation, drop near-duplicates of a better entry (probability, then
+    confidence, then earliest paragraph / position). Returns the survivors in original order."""
+    by_reg: dict[str, list[dict]] = {}
+    for e in entries:
+        e["fp"] = _fingerprint(e["req"]["text"])
+        by_reg.setdefault(e["req"]["source"]["regulation"], []).append(e)
+    dropped: set[int] = set()
+    for group in by_reg.values():
+        kept: list[dict] = []
+        for e in sorted(group, key=lambda e: (-e["prob"], -e["conf"], e["seq"])):
+            twin = next((k for k in kept if near_duplicates(e["fp"], k["fp"], threshold)), None)
+            if twin is None:
+                kept.append(e)
+            else:
+                dropped.add(e["seq"])
+                if log is not None:
+                    log.append({"removed": e["req"], "removed_prob": e["prob"], "kept": twin["req"], "kept_prob": twin["prob"]})
+    return [e for e in entries if e["seq"] not in dropped]
+
+
 def clip(text: str) -> str:
     """At most MAX_TEXT characters, cut at a word boundary."""
     if len(text) <= MAX_TEXT:
@@ -112,7 +171,8 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
                      review: dict[tuple[str, int], int] | None = None, review_below: int = 0,
                      trace: list | None = None, review_category_medium: bool = False,
                      review_low: bool = False, review_log: list | None = None, review_all: bool = False,
-                     rationale: set[str] | None = None) -> tuple[dict, dict]:
+                     rationale: set[str] | None = None, dedup: float | None = None,
+                     dedup_log: list | None = None) -> tuple[dict, dict]:
     """(submission dict, stats). rows are extracted.jsonl lines; records maps paragraph id -> index record.
     corrections: {(paragraph id, requirement index): corrected text} from faithfulness.py, replacing the extracted text.
     keep: only these regulations (None = all). Paragraphs below min_confidence, in drop_categories, or in
@@ -129,7 +189,7 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
     review for a row of the first two kinds raises KeyError (run review_medium.py). review_log gets one dict per
     reviewed requirement: id, index, category, confidence, probability, kept."""
     stats = Counter()
-    reqs, seen = [], set()
+    entries, seen = [], set()
     floor = CONFIDENCE_RANK[min_confidence]
     for row in rows:
         if row["regulation"] in exclude or not row["requirements"] or (keep is not None and row["regulation"] not in keep):
@@ -161,10 +221,12 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
             if corrections and (row["id"], i) in corrections:
                 stats["faithfulness_corrected"] += 1
                 text = corrections[(row["id"], i)]
+            prob_used = 100
             if review is not None and (must_review or row.get("confidence") == "medium"):
                 if must_review and (row["id"], i) not in review:
                     raise KeyError(f"no review for {row['id']} #{i}; run review_medium.py")
                 prob = review.get((row["id"], i), 100)
+                prob_used = prob
                 if review_log is not None:
                     review_log.append({"id": row["id"], "index": i, "category": row.get("category"),
                                        "confidence": row.get("confidence"), "probability": prob,
@@ -182,11 +244,20 @@ def build_submission(rows: list[dict], records: dict[str, dict], case_id: str, e
             if len(text) > MAX_TEXT:
                 stats["truncated"] += 1
                 text = clip(text)
-            reqs.append({"id": f"R-{len(reqs) + 1:04d}", "text": text,
+            entries.append({"seq": len(entries), "prob": prob_used, "conf": CONFIDENCE_RANK.get(row.get("confidence"), 2),
+                            "req": {"id": "", "text": text,
                          "source": {"regulation": rec["regulation"], "version": rec["version"], "page": rec["page"],
                                     "paragraph": rec["paragraph"]},
-                         "evidence_id": rec["id"], "reason": row["reason"]})
-            stats[rec["regulation"]] += 1
+                         "evidence_id": rec["id"], "reason": row["reason"]}})
+    if dedup:
+        before = len(entries)
+        entries = dedup_near_duplicates(entries, dedup, dedup_log)
+        stats["near_duplicates_removed"] = before - len(entries)
+    reqs = []
+    for e in entries:
+        e["req"]["id"] = f"R-{len(reqs) + 1:04d}"
+        reqs.append(e["req"])
+        stats[e["req"]["source"]["regulation"]] += 1
     return {"team_id": config.TEAM_ID, "case_id": case_id, "requirements": reqs}, dict(stats)
 
 
@@ -200,7 +271,7 @@ def make_submission(case_id: str, *, exclude: list[str] | None = None, unknown_p
                     review_instead: bool | None = None, review_low: bool | None = None,
                     review_prompt: str | None = None, trace: list | None = None,
                     review_log: list | None = None, review_all: bool | None = None,
-                    review_twice: bool | None = None) -> tuple[dict, dict]:
+                    review_twice: bool | None = None, dedup_log: list | None = None) -> tuple[dict, dict]:
     """The submission for a case under the given switches (None = the value in config.py). No API calls.
     faithfulness: use the corrected texts of faithfulness.jsonl (default config.FAITHFULNESS_CHECK)."""
     out_dir = config.CASES_BUILD / case_id
@@ -229,7 +300,8 @@ def make_submission(case_id: str, *, exclude: list[str] | None = None, unknown_p
                             deselected=deselected, review=review, review_below=config.REVIEW_DROP_BELOW, trace=trace,
                             review_category_medium=instead, review_low=low, review_log=review_log,
                             review_all=every,
-                            rationale=rationale_ids(by_reg) if config.DROP_RATIONALE_PARTS else None)
+                            rationale=rationale_ids(by_reg) if config.DROP_RATIONALE_PARTS else None,
+                            dedup=config.DEDUP_SIMILARITY if config.DEDUP_NEAR_DUPLICATES else None, dedup_log=dedup_log)
 
 
 def run_tool(script: str, *args: str) -> subprocess.CompletedProcess:

@@ -79,6 +79,13 @@ VEHICLE_CATEGORY_USE_PRIMARY = False      # category check uses the stated "vehi
 # rationale", "justification" etc. (and everything that belongs to it). Default on; no API call, export only.
 DROP_RATIONALE_PARTS = True
 
+# ---- v11: near-duplicate removal at export --------------------------------------------------------------------------------
+# Within one regulation, requirements whose normalised texts are near-identical (token-set similarity >= 0.9, or one text
+# contained in the other with >= 90% of its tokens) are reduced to one: highest review probability, then extraction
+# confidence, then earliest paragraph. Texts whose numbers/units/limit words differ are never duplicates. Export only.
+DEDUP_NEAR_DUPLICATES = True
+DEDUP_SIMILARITY = 0.9
+
 # ---- presets ---------------------------------------------------------------------------------------------------------
 # FARSIGHTED_PRESET=v5_a|v7_a|v7_b|v7_c|v8_a|v8_b python src/run_case.py ...   sets the switches above; unset = v8_b (v8_b_lean = v8_b + cost cuts).
 PRESETS = {
@@ -89,6 +96,12 @@ PRESETS = {
     "v8_a": {"REVIEW_ALL": True, "REVIEW_PROMPT": "criteria"},
     "v8_b": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria"},
     "v8_c": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria", "SPEC_LISTS_COMPLETE": True},
+    # v11: dedup is the default (DEDUP_NEAR_DUPLICATES); these names make it explicit. t25/t35 differ only in the review keep threshold.
+    "v8_a_dedup": {"REVIEW_ALL": True, "REVIEW_PROMPT": "criteria", "DEDUP_NEAR_DUPLICATES": True},
+    "v8_b_dedup": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria",
+                   "DEDUP_NEAR_DUPLICATES": True},
+    "v8_a_t25": {"REVIEW_ALL": True, "REVIEW_PROMPT": "criteria", "DEDUP_NEAR_DUPLICATES": True, "REVIEW_DROP_BELOW": 25},
+    "v8_a_t35": {"REVIEW_ALL": True, "REVIEW_PROMPT": "criteria", "DEDUP_NEAR_DUPLICATES": True, "REVIEW_DROP_BELOW": 35},
     # v8_b with every cost cut: same exported requirements (faithfulness off: it did not change platform scores)
     "v8_b_lean": {"REVIEW_ALL": True, "REVIEW_BORDERLINE_TWICE": True, "REVIEW_PROMPT": "criteria",
                   "SKIP_DESELECTED_BEFORE_EXTRACTION": True, "FAITHFULNESS_CHECK": False,

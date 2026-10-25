@@ -69,6 +69,22 @@ cp build/cases/$CASE/submission.json ~/Desktop/UPLOAD_${CASE}_v7_c_$(date +%H%M)
 `submission_X.json` the same way with X in the file name. The last valid upload before the lock counts for the held-out
 case, so do not upload a worse file at the end.
 
+### 4b. Sunday upload plan: dedup on, threshold variants (export only, no API calls)
+`DEDUP_NEAR_DUPLICATES` is on in every preset (config default; `FARSIGHTED_OVERRIDES="DEDUP_NEAR_DUPLICATES=0"` turns it off). Within one
+regulation it drops a requirement that is a near-duplicate of a better one (token-set similarity >= 0.9 or >= 90% containment, no more than
+one differing content word, identical numbers/units/limit words); the survivor has the higher review probability. Never across regulations.
+After the held-out run (the cache then holds extraction and reviews; bumper-style case needs the lean overrides for the plain presets):
+```bash
+export OV="FAITHFULNESS_CHECK=0,VEHICLE_CATEGORY_CHECK=1,VEHICLE_CATEGORY_USE_PRIMARY=1"     # only if the run used v8_b_lean
+for P in v8_a_dedup v8_a_t25 v8_a_t35 v8_b_dedup; do
+  FARSIGHTED_PRESET=$P FARSIGHTED_OVERRIDES="$OV" python src/export.py cases/$CASE --name $P     # validates
+  cp build/cases/$CASE/submission_$P.json ~/Desktop/UPLOAD_${CASE}_${P}_$(date +%H%M).json
+done
+```
+Upload in that order (v8_a_dedup, v8_a_t25, v8_a_t35, v8_b_dedup); `v8_a_t25` / `v8_a_t35` differ from `v8_a_dedup` only in the review keep
+threshold (>= 25 / >= 35 instead of >= 15). Re-upload the best one last, before 12:30. Dev (local judge, cached): v8_a_dedup 400 req F2 .656,
+v8_a_t25 319 req F2 .654, v8_a_t35 251 req F2 .583 (recall falls fast), v8_b_dedup 396 req F2 .661.
+
 ## 5. Estimated cost and time of a full bumper-sized run
 Token counting only (no generation) on the synthetic front bumper; Sonnet 5.5 at $2 / $10 per million tokens, cache reads
 $0.20, USD to EUR 0.92. Output tokens per candidate are a range measured on two runs (96 and 182); review items per
