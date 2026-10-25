@@ -1,161 +1,103 @@
-# Certivity hackathon challenge: from a product specification to the requirements it must fulfil
+﻿# Farsighted
+### AI-powered Automotive Regulatory Engineering
+**UVC Industrial Agents Hackathon 2026 | Team 07**
 
-Certivity turns regulations into structured text with paragraph-level citations. Your task is the problem our users have: a company builds a product, and its engineers need to know every requirement the product must fulfil under the UN Regulations that apply to it.
+Farsighted helps automotive engineers turn complex regulatory documents into actionable, traceable engineering requirements.
 
-You may use any tools, models and methods you like. **You submit outputs, not code.** Certivity never runs your code.
+Instead of manually reviewing hundreds of pages of UNECE regulations, engineers can use Farsighted to identify relevant obligations, inspect supporting evidence, and review the proposed requirements before incorporating them into their development workflow.
 
-## The two goals
+## Challenges
 
-**Main goal (required).** Input: a technical specification and/or an exploded view of a component or product. Output: the engineering requirements it must fulfil. Each requirement cites the UN Regulation it comes from, **at least to the page number**. A test case per requirement is optional.
+### Main Challenge — Regulatory Requirements Extraction
 
-**Sub-goal (optional).** Input: the requirements derived from one version of a UN Regulation, and a later version of the same regulation. Output: which requirements must change, and what in the regulation caused it.
+**Held-out case: Front Bumper**
 
-## What is in this package
+The system analyzes automotive regulations against a specific component description and generates structured engineering requirements.
 
-```
-README.md
-LICENSE  LICENSE-DATA.md        MIT for the tools; the data is for use in this hackathon only
-regulations/
-  index.json                    every regulation you may cite: a base and (for most) a latest version, as download links with checksums
-cases/
-  dev-rear-lamp/                the worked example (a vehicle rear lamp)
-    spec.md
-    exploded_view.png
-    expected.json               the answer we expect, so you can see what a good result looks like
-subgoal/
-  dev/                          the worked example for the sub-goal
-    files.json                  the old and the new version of the regulation, as download links
-    requirements_old.json       the requirements derived from the old version (input to the sub-goal)
-    expected.json               the answer we expect for this example
-schemas/                        JSON Schemas of the two submission formats
-tools/
-  validate.py                   check your file before uploading
-  score_local.py                score regulation and page level on the worked example, offline
-  fetch_regulations.py          download the regulation PDFs
-```
+Core capabilities:
+- Identify applicable regulatory obligations.
+- Extract atomic, individually testable requirements.
+- Associate every requirement with its regulation, version, page, and paragraph.
+- Preserve source evidence for verification.
+- Filter requirements according to component applicability.
+- Generate machine-readable JSON for engineering review.
 
-The held-out case (the one that decides the ranking) is **released on Sunday morning**: we add it to this repository. Run `git pull` (or download the repository again): it adds the held-out case's folders under `cases/` and `subgoal/`, and running `tools/fetch_regulations.py` again downloads its PDFs too.
+The team's final selected main-challenge artifact contains 317 requirements.
 
-## 1. Get the PDFs
+### Optional Challenge — Regulation Change Detection
 
-```bash
-python tools/fetch_regulations.py             # everything: regulations/pdf/<regulation>/<base|latest>/*.pdf and the sub-goal old.pdf / new.pdf
-python tools/fetch_regulations.py --role base # only the base versions
-```
+**Subgoal V48 — 153 Changes**
 
-Every download is checked against its checksum. The links expire after the hackathon, so download what you need while it runs. `regulations/index.json` also gives the original UNECE address of each regulation.
+The optional challenge identifies changes between regulatory versions and produces structured outputs describing the affected requirements.
 
-**`CERTIFICATE_VERIFY_FAILED` on macOS?** If every download fails with `[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate`, your Python has no CA certificates to check the server against. This is common with Python from python.org, which does not use the macOS keychain. Fix it once with either of these:
+The goal is to help engineering teams understand what has changed and where further compliance review may be necessary.
 
-- Run the certificate installer that ships with Python (use your version number): `open "/Applications/Python 3.13/Install Certificates.command"`. If you see no `Install Certificates.command` in that folder, your Python did not come from python.org: use the second option.
-- Or point Python at the `certifi` bundle:
+## Engineering Review Demo
 
-  ```bash
-  python3 -m pip install --user certifi
-  export SSL_CERT_FILE="$(python3 -m certifi)"   # add this line to ~/.zshrc to keep it
-  python3 tools/fetch_regulations.py
-  ```
+The Streamlit application provides an interactive interface for reviewing extracted requirements.
 
-Check the fix with `python3 -c "import urllib.request; urllib.request.urlopen('https://www.python.org')"`. If it prints nothing, it worked. Files that already downloaded are skipped when you run the script again. On a corporate network that inspects HTTPS traffic, ask IT for the company root certificate, then set `SSL_CERT_FILE` to that file.
+Features include:
+- Guided engineering review workflow
+- Regulation and source inspection
+- Requirement-level evidence and explanations
+- Keep/discard review decisions
+- Visual component context
+- Structured results for downstream use
 
-**Two versions of every regulation.** Each entry in `regulations/index.json` has a `base` version and, for most regulations, a `latest` version (a newer supplement or series).
+Run the latest demo from the repository root:
 
-- **Main goal:** the expected requirements are built on the **base** version. Cite the pages of its file(s).
-- **Sub-goal:** the `latest` version is what changed. Compare it with the base version to find which requirements must change.
+    python -m streamlit run demo/app_v2.py
 
-You may only cite regulations that appear in `regulations/index.json`, and not every regulation in it applies to the product: choosing the right ones is part of the task.
+The demo implementation and supporting UI files are located in:
 
-## 2. Main goal: the output format
+    demo/app_v2.py
+    demo/ui/
+    demo/examples/
 
-One JSON file. See `cases/dev-rear-lamp/expected.json` for a full example.
+## Approach
 
-```json
-{
-  "team_id": "team-07",
-  "case_id": "dev-rear-lamp",
-  "requirements": [
-    {
-      "id": "R-001",
-      "text": "The rear lamp shall ...",
-      "source": { "regulation": "UN R48", "version": "9.3.0", "page": 6, "paragraph": "6.2" },
-      "test_case": "optional free text"
-    }
-  ]
-}
-```
+The solution combines regulatory document processing, contextual applicability assessment, structured requirement extraction, and evidence-based engineering review.
 
-- `team_id`: your team id, shown on the platform after you register.
-- `case_id`: the id of the case you submit for: `dev-rear-lamp` for the worked example; for the held-out case it is the name of its folder under `cases/`.
-- `id` must be unique in the file. `text` is not empty and at most 2,000 characters.
-- `source.regulation` must be one of the `regulation` values in `regulations/index.json`.
-- `source.version` is required: the `version_label` of one of that regulation's versions in `regulations/index.json`. A page only means something
-  together with its version, because each version is its own PDF. The expected requirements are built on the **`base`** version, so cite that one:
-  a page of the `latest` version is counted as a different page, not as the right one.
-- `source.page` is a positive integer and is required: a page of that version's PDF. `source.paragraph` and `test_case` are optional.
-- At most 5,000 requirements and 5 MB per file.
+Typical workflow:
 
-**Granularity: write one engineering obligation per requirement, as in the worked example.**
+1. Ingest regulation documents and component context.
+2. Identify potentially applicable regulations and provisions.
+3. Extract technical obligations into individual requirements.
+4. Evaluate relevance to the component.
+5. Attach verifiable source references.
+6. Produce structured JSON.
+7. Review results through the interactive demo.
 
-## 3. Sub-goal: the output format
+## Submission Format
 
-```json
-{
-  "team_id": "team-07",
-  "case_id": "subgoal-dev",
-  "changes": [
-    {
-      "requirement_id": "R-014",
-      "change": "modified",
-      "new_text": "...",
-      "reason": "Paragraph 5.3 now sets ...",
-      "source": { "page": 9, "paragraph": "5.3" }
-    }
-  ]
-}
-```
+The main challenge uses structured JSON containing:
+- Team and case identifiers
+- Individual requirement IDs
+- Requirement text
+- Regulation, version, page and paragraph
+- Evidence references
+- Applicability reasoning
 
-- `change` is `modified`, `removed` or `added`.
-- For `modified` and `removed`, `requirement_id` must be one of the ids in that case's `requirements_old.json`. For `added` it must be `null`.
-- `new_text` is required for `modified` and `added`. `reason` is always required: say what changed in the regulation.
+The optional challenge produces structured regulation-change records.
 
-## 4. Check your file before you upload it
+## Repository Structure
 
-```bash
-pip install jsonschema          # the only dependency
-python tools/validate.py my_submission.json
-python tools/validate.py my_changes.json --requirements-old subgoal/dev/requirements_old.json
-```
+- `src/` — Regulatory processing and extraction code
+- `demo/` — Streamlit engineering review application
+- `demo/ui/` — Demo interface helpers
+- `demo/examples/` — Demo input and output examples
+- `tools/` — Supporting utilities and validation scripts
 
-Every problem is printed with its JSON path, for example `$.requirements[3].source.page: Must be at least 1.` Add `--strict` to also list any field that is not part of the format (extra fields are allowed, just ignored). The submission platform runs this same check on every upload, so a file that passes here is accepted there.
+## Evaluation and Limitations
 
-You can also score the regulation and page levels of the worked example without uploading anything:
+The hackathon evaluates requirement extraction against a held-out reference case.
 
-```bash
-python tools/score_local.py my_submission.json      # compares with cases/dev-rear-lamp/expected.json
-```
+The project combines automated extraction with iterative requirement review and refinement. The curated submission artifacts should not be assumed to be reproducible from a single pipeline run without the corresponding review and post-processing steps.
 
-The requirement-level score needs a model to compare meanings, so it is computed on the platform.
+Regulatory requirements remain subject to engineering verification and interpretation. Farsighted is a decision-support prototype, not a substitute for formal homologation or legal approval.
 
-## 5. Upload and see your score
+## Team
 
-Register your team on the submission platform at the address and with the invite code shown on the screen, then upload your files for the main goal and the optional sub-goal. Your upload is scored in the background and the result appears on the page. At the moment you can upload **5 times per hour for each challenge**; a file that fails validation does not count.
+**Farsighted — Team 07**
 
-**Which upload counts.** For the worked example, your best upload is the one shown on the leaderboard. For the **held-out case, your last valid upload counts**, not your best: your final upload before the lock is your result, so do not upload a worse file at the end.
-
-## How it is judged
-
-**Main goal.** The primary measure is **recall and precision** of your requirements against Certivity's golden dataset, which our regulatory experts prepared. We look at three levels:
-
-- *Regulations:* did you cite the right UN Regulations, and only those?
-- *Pages:* did you cite the right pages (a page of the right version) of them? **The page number or the paragraph number is enough:** a page counts if either is right, so give the paragraph number too (`source.paragraph`) and a page number that is off by one does not cost you. Paragraph labels are compared by meaning, not by spelling: `Annex 8 2.1`, `Annex 8, 2.1.` and `annex 8 2.1` are the same paragraph (case, spaces, commas and a closing dot do not matter), but `5.4.2.3` is not `5.4.23`.
-- *Requirements:* each of your requirements is matched one to one with an expected requirement that states the same engineering obligation (same scope, condition and constraint). Precision is the share of your requirements that match; recall is the share of expected requirements that you found.
-
-The secondary measure is the user interface, judged by the jury.
-
-**Sub-goal.** The **recall** of the requirements you flagged for change, and the **accuracy** of the change you state for each one.
-
-Certivity pre-selects the finalist teams, who pitch on Sunday from 15:00.
-
-## Licence
-
-The tools and schemas are MIT-licensed (`LICENSE`). The data in this package is for use in this hackathon only (`LICENSE-DATA.md`).
+Built for the UVC Industrial Agents Hackathon, Munich, 24–25 October 2026.
