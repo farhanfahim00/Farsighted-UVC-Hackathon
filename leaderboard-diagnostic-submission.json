@@ -1,0 +1,126 @@
+{
+  "team_id": "team-07",
+  "case_id": "dev-rear-lamp",
+  "requirements": [
+    {
+      "id": "R-05773a434fdba27c1718",
+      "text": "If the rear lamp uses replaceable light source module(s), the light source module(s) shall bear the trade name or mark of the applicant.\nApplicability condition: The lamp uses replaceable light source module(s). The product evidence lists LED modules on PCB but does not state whether they are replaceable.",
+      "source": {
+        "regulation": "UN R148",
+        "version": "1.6.0",
+        "paragraph": "3.3.3.5",
+        "page": 8
+      }
+    },
+    {
+      "id": "R-0f55289fadc1dab9b4dd",
+      "text": "If the rear lamp uses replaceable light source module(s), the lamp shall bear the rated voltage(s) or the range of voltage.\nApplicability condition: The lamp uses replaceable light source module(s). Rated voltage and replaceability are not stated in the product evidence.",
+      "source": {
+        "regulation": "UN R148",
+        "version": "1.6.0",
+        "paragraph": "3.3.3.5",
+        "page": 8
+      }
+    },
+    {
+      "id": "R-2ad6001932837ab5aa6f",
+      "text": "If the rear lamp is an ESA tested for immunity to supply-line transients, then for test pulse 3b of Table 3b use an immunity test level of +75 V (12 V system) or +150 V (24 V system), with a test duration of 1 h. The FPSC is I for ESA related to immunity related functions and III for ESA not related to immunity related functions.\nApplicability condition: The rear lamp is an ESA representative of its type subject to the 6.9 transient immunity test; the 12 V or 24 V level applies according to the actual system voltage.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1. Table 3b",
+        "page": 12
+      }
+    },
+    {
+      "id": "R-7c3ff426e17f2a654f6a",
+      "text": "If the rear lamp is an ESA tested for immunity to supply-line transients, then for test pulse 3a of Table 3b use an immunity test level of -112 V (12 V system) or -150 V (24 V system), with a test duration of 1 h. The FPSC is I for ESA related to immunity related functions and III for ESA not related to immunity related functions.\nApplicability condition: The rear lamp is an ESA representative of its type subject to the 6.9 transient immunity test; the 12 V or 24 V level applies according to the actual system voltage.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1. Table 3b",
+        "page": 12
+      }
+    },
+    {
+      "id": "R-8010baeca644e535baf4",
+      "text": "If the rear lamp uses replaceable light source module(s), the lamp shall bear the specific identification code of the module as prescribed in paragraph 3.3.3.5(a)(ii): the letters \"MD\" followed by the approval mark without the circle, with additional symbols or characters where several non-identical modules are used.\nApplicability condition: The lamp uses replaceable light source module(s). The product evidence does not confirm replaceability.",
+      "source": {
+        "regulation": "UN R148",
+        "version": "1.6.0",
+        "paragraph": "3.3.3.5",
+        "page": 8
+      }
+    },
+    {
+      "id": "R-8bf6a344d8fdd0615521",
+      "text": "If the rear lamp is an ESA tested for immunity to supply-line transients, then for test pulse 2a of Table 3b use an immunity test level of +37 V (12 V system) or +37 V (24 V system), with 500 pulses. The FPSC is I for ESA related to immunity related functions and III for ESA not related to immunity related functions.\nApplicability condition: The rear lamp is an ESA representative of its type subject to the 6.9 transient immunity test; the 12 V or 24 V level applies according to the actual system voltage.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1. Table 3b",
+        "page": 12
+      }
+    },
+    {
+      "id": "R-9f84050aff2340077303",
+      "text": "If the rear lamp (which includes LED modules on a PCB) is treated as an electrical/electronic sub-assembly (ESA) representative of its type and is tested for immunity to transient disturbances conducted along 12/24 V supply lines, test it for pulses 1, 2a, 2b, 3a and 3b by the method(s) of ISO 7637-2 as described in Annex 10, at the test levels given in Table 3b. Apply the Functional Performance Status Classification (FPSC) of ISO 7637-1 for pulses 1, 2a, 2b, 3a and 3b.\nApplicability condition: The rear lamp is an ESA representative of its type that is subject to the UN R10 6.9 transient-disturbance immunity test on a 12 V or 24 V supply.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1",
+        "page": 12
+      }
+    },
+    {
+      "id": "R-a527afb9e0371cbe8d18",
+      "text": "If the rear lamp uses replaceable light source module(s), the light source module(s) shall bear the specific identification code of the module. The code shall start with the letters \"MD\" (for \"MODULE\"), followed by the approval mark without the circle as prescribed in paragraph 3.3.2.1.1. Where several non-identical light source modules are used, additional symbols or characters shall follow. The approval mark need not be the same as the one on the lamp in which the module is used, but both marks shall be from the same applicant.\nApplicability condition: The lamp uses replaceable light source module(s). The product evidence does not confirm replaceability.",
+      "source": {
+        "regulation": "UN R148",
+        "version": "1.6.0",
+        "paragraph": "3.3.3.5",
+        "page": 8
+      }
+    },
+    {
+      "id": "R-bd641f9d25012f8d8a3e",
+      "text": "If the rear lamp is an ESA tested for immunity to supply-line transients, then for test pulse 1 of Table 3b use an immunity test level of -75 V (12 V system) or -450 V (24 V system), with 500 pulses. The FPSC is III both for ESA related to immunity related functions and for ESA not related to them.\nApplicability condition: The rear lamp is an ESA representative of its type subject to the 6.9 transient immunity test; the 12 V or 24 V level applies according to the actual system voltage.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1. Table 3b",
+        "page": 12
+      }
+    },
+    {
+      "id": "R-cb34a6fad43b289286e2",
+      "text": "If the rear lamp uses replaceable light source module(s), the light source module(s) shall bear the rated voltage(s) or the range of voltage.\nApplicability condition: The lamp uses replaceable light source module(s). Rated voltage and replaceability are not stated in the product evidence.",
+      "source": {
+        "regulation": "UN R148",
+        "version": "1.6.0",
+        "paragraph": "3.3.3.5",
+        "page": 8
+      }
+    },
+    {
+      "id": "R-dc211d09b7ebc42e8c49",
+      "text": "If the rear lamp is an ESA that could be installed in a vehicle with an internal combustion engine started with a 12 V/24 V starter motor, test the starting profile by the method(s) of ISO 16750-2 as described in Annex 10, at immunity test level II (12 V system) or II (24 V system), with 10 pulses. Classify the starting profile test according to the functional status classification defined in ISO 16750-1. For ESA related to immunity related functions, Table 3a gives class B for ESA which shall be operational during engine start phases and class C for other ESA. For ESA not related to immunity related functions, Table 3a gives class D.\nApplicability condition: The rear lamp is an ESA representative of its type that could be installed in vehicles with internal combustion engines started with a 12 V/24 V starter motor.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1",
+        "page": 12
+      }
+    },
+    {
+      "id": "R-f585a7d210a0d7969c0c",
+      "text": "If the rear lamp is an ESA tested for immunity to supply-line transients, then for test pulse 2b of Table 3b use an immunity test level of +10 V (12 V system) or +20 V (24 V system), with 10 pulses. The FPSC is II for ESA related to immunity related functions and III for ESA not related to immunity related functions.\nApplicability condition: The rear lamp is an ESA representative of its type subject to the 6.9 transient immunity test; the 12 V or 24 V level applies according to the actual system voltage.",
+      "source": {
+        "regulation": "UN R10",
+        "version": "7.2.0",
+        "paragraph": "6.9.1. Table 3b",
+        "page": 12
+      }
+    }
+  ]
+}
