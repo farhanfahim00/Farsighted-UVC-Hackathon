@@ -13,7 +13,8 @@ def reg(name, version="1.0"):
 
 
 def raw(applies="yes", depends=(), only_unc=False, supersedes=(), superseded_by=(), note=""):
-    return {"applies": applies, "confidence": "high", "level": "product_itself", "depends_on": list(depends),
+    return {"applies": applies, "relation": "applies" if applies == "yes" else "outside_scope",
+            "confidence": "high", "level": "product_itself", "depends_on": list(depends),
             "depends_only_on_uncertain": only_unc, "supersession_note": note, "supersedes": list(supersedes),
             "superseded_by": list(superseded_by), "reason": "because"}
 
