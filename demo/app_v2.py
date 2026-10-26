@@ -182,14 +182,14 @@ elif step == 1:
                 with st.container(height=300):
                     st.markdown(spec.decode("utf-8-sig", errors="replace"))
             else:
-                st.info("No specification available.")
+                st.info("Upload a spec and drawing from the Certivity package.")
         with b:
             st.markdown("**Drawing / exploded view**")
             if img:
                 st.caption(img_n)
                 st.image(img, use_container_width=True)
             else:
-                st.info("No drawing available.")
+                st.info("Upload a spec and drawing from the Certivity package.")
 
     if choice != UPLOAD_CHOICE:
         case_id = CASES[choice]
