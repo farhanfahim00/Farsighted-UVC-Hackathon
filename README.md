@@ -36,7 +36,7 @@ The idea is simple: code finds and cites the evidence, and Claude only judges it
 - **Dev rear lamp (platform):** F2 69.4 percent, precision 39.8, recall 85.3. The first version scored 32.3.
 - **Held-out front bumper, final upload:** F2 69 percent, 317 requirements across 7 regulations.
 - **Sub-goal dev:** flag recall 87.5 percent, change accuracy 100 percent, flag precision 48.8 percent.
-- **Held-out sub-goal:** [submissions/subgoal/regulation-changes-v48-153.json](https://github.com/farhanfahim00/Farsighted-UVC-Hackathon/blob/main/submissions/subgoal/regulation-changes-v48-153.json) (153 changes). TODO: add the held-out sub-goal score, none is recorded in the repo.
+- **Held-out sub-goal:** [submissions/subgoal/regulation-changes-v48-153.json](https://github.com/farhanfahim00/Farsighted-UVC-Hackathon/blob/main/submissions/subgoal/regulation-changes-v48-153.json) (153 changes). The held-out sub-goal score was not recorded in this repo.
 - **Held-out main submission (317 requirements):** [submissions/main/front-bumper-candidate-317.json](https://github.com/farhanfahim00/Farsighted-UVC-Hackathon/blob/main/submissions/main/front-bumper-candidate-317.json). A 348-requirement variant is next to it.
 
 The final submission files were reviewed and refined after the pipeline runs, so they are not reproducible from a single pipeline run.
@@ -98,6 +98,8 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt   # only for the tests
 ```
 
+Most tests need the Certivity data in `cases/` and `subgoal/` and the build caches, so they fail on a fresh clone without them.
+
 Windows (PowerShell):
 
 ```powershell
@@ -139,6 +141,8 @@ python tools/validate.py build/cases/$CASE/submission.json
 
 This uses the Anthropic API. The command below caps spending at 4 USD.
 
+The commands below are adapted from the Windows guide, not tested on Mac/Linux.
+
 ```bash
 git switch sami
 python -m tools.subgoal_pipeline \
@@ -155,7 +159,7 @@ python tools/validate.py runs/subgoal-heldout/submission_subgoal.json \
     --kind subgoal --requirements-old subgoal/heldout/requirements_old.json
 ```
 
-`SUBGOAL_GUIDE.md` on the `sami` branch has the dev run and the review steps in more detail. Its examples are written for Windows PowerShell. TODO: confirm the exact `--case-id` for the held-out sub-goal; the guide only gives a placeholder.
+`SUBGOAL_GUIDE.md` on the `sami` branch has the dev run and the review steps in more detail. Its examples are written for Windows PowerShell.
 
 ## Validate any submission
 
