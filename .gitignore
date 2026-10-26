@@ -1,7 +1,17 @@
-.env
-regulations/pdf/
-__pycache__/
-.DS_Store
 subgoal/**/*.pdf
-build/
+
+# Certivity hackathon data: not redistributable, get it from the Certivity package (see README)
+cases/
 cases_extra/
+subgoal/
+regulations/pdf/
+regulations/index.json
+*.pdf
+*.zip
+
+.env
+build/
+runs/
+__pycache__/
+.pytest_cache/
+.DS_Store
