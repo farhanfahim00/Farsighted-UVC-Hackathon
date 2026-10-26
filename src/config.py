@@ -23,6 +23,10 @@ UNKNOWN_POLICY = "include"
 
 # ---- v2: precision controls (see src/export.py, src/overlap.py) -------------------------------------------------------
 DROP_OVERLAPPING = True                # after screening, drop an older regulation whose devices a newer one consolidates
+OVERLAP_MIN_CONFIDENCE = "high"        # an overlap pair drops the older regulation only at this confidence or above
+SECOND_LOOK_SKIPPED = True             # second look also re-asks paragraphs first judged "applies = no" that carry obligation words
+SECOND_LOOK_SKIPPED_REGS = ("UN R26", "UN R42", "UN R127", "GTR 9", "UN R10")  # empty = every regulation
+SECOND_LOOK_SKIPPED_MAX_CONF = "medium"  # ...but only if that "no" was not high confidence (low <= this)
 MIN_CONFIDENCE = "medium"              # export keeps paragraphs with confidence >= this (low < medium < high)
 # Extraction categories whose paragraphs are not exported. Decided by src/analyze_extras.py --rules on the dev case
 # (a rule is applied only if it removes at most 1 expected paragraph and at least 20 extras).
@@ -85,6 +89,10 @@ DROP_RATIONALE_PARTS = True
 # confidence, then earliest paragraph. Texts whose numbers/units/limit words differ are never duplicates. Export only.
 DEDUP_NEAR_DUPLICATES = True
 DEDUP_SIMILARITY = 0.9
+
+# Export only these regulations (empty = no filter). Applied in export.py after all other regulation filters.
+# manual, case-specific selection of regulations (empty = off)
+EXPORT_REGULATION_ALLOWLIST: tuple[str, ...] = ()
 
 # ---- presets ---------------------------------------------------------------------------------------------------------
 # FARSIGHTED_PRESET=v5_a|v7_a|v7_b|v7_c|v8_a|v8_b python src/run_case.py ...   sets the switches above; unset = v8_b (v8_b_lean = v8_b + cost cuts).

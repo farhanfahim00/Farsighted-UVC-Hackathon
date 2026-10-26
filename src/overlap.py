@@ -8,7 +8,7 @@ consolidated one. The older one is dropped (config.DROP_OVERLAPPING) and the rea
 Input:  build/cases/<case_id>/regulations.json (via regulation_set), build/regulation_scopes.json
 Output: build/cases/<case_id>/overlap.json   {pairs (all the model flagged), dropped {older: {newer, reason}}, ignored}
 
-Nothing here knows any regulation name. Low-confidence pairs are recorded but not applied.
+Nothing here knows any regulation name. Pairs below config.OVERLAP_MIN_CONFIDENCE are recorded but not applied.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ OVERLAP_SCHEMA = object_schema({"pairs": {"type": "array", "items": object_schem
     "newer": S, "older": S, "shared_scope": S, "reason": S,
     "confidence": {"type": "string", "enum": ["high", "medium", "low"]}})}})
 SCOPE_CHARS = 1500
+RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 def overlap_content(decisions: list[dict], scopes: dict) -> list[dict]:
@@ -49,8 +50,8 @@ def validate_pairs(raw_pairs: list[dict], names: set[str]) -> tuple[dict, list[d
             why = "same regulation"
         elif (p["older"], p["newer"]) in claims:
             why = "claimed in both directions"
-        elif p["confidence"] == "low":
-            why = "low confidence"
+        elif RANK[p["confidence"]] < RANK[config.OVERLAP_MIN_CONFIDENCE]:
+            why = f"{p['confidence']} confidence (needs {config.OVERLAP_MIN_CONFIDENCE}); regulation kept"
         if why:
             ignored.append({**p, "ignored_because": why})
         else:

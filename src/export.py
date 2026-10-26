@@ -281,6 +281,10 @@ def make_submission(case_id: str, *, exclude: list[str] | None = None, unknown_p
     keep = set(kept_regulations(case_id, unknown_policy=unknown_policy, drop_overlap=drop_overlap,
                                  exclude_vehicle_level=exclude_vehicle_level,
                                  vehicle_category_check=vehicle_category_check))
+    if config.EXPORT_REGULATION_ALLOWLIST:
+        # manual, case-specific selection of regulations (empty = off)
+        allowed = {r if r.startswith("UN ") else f"UN {r}" for r in config.EXPORT_REGULATION_ALLOWLIST}
+        keep &= allowed
     use_faithfulness = config.FAITHFULNESS_CHECK if faithfulness is None else faithfulness
     corrections = load_corrections(case_id, rows) if use_faithfulness else None
     complete = config.SPEC_LISTS_COMPLETE if spec_lists_complete is None else spec_lists_complete

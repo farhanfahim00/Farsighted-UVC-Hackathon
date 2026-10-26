@@ -122,12 +122,17 @@ def load_tables(wanted: set[str]) -> dict[str, dict]:
 # One batch
 # ---------------------------------------------------------------------------------------------------------------------
 
+SECOND_LOOK_SKIPPED_NOTE = ("Some of these paragraphs were first judged NOT to apply, with limited confidence. Reconsider them against "
+                            "the profile: if the product, or a component or function it contains or may contain, falls under the "
+                            "paragraph, write the requirement with the condition and confidence medium or low. If it truly does not, "
+                            "leave the list empty.\n\n")
 SECOND_LOOK = ("SECOND LOOK: in a first pass you decided that each of these paragraphs applies but wrote no requirement, "
                "although its text contains obligation words. Look again. If the paragraph states an obligation, even one "
                "that holds only under a condition (an option, or a case the profile leaves open), write it as a requirement "
                "that states the condition, with confidence medium or low. If the paragraph only introduces the items "
                "below it (their own paragraphs carry the obligation) or states nothing for the product, leave the list "
                "empty.\n\n")
+CONF_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 class Run:
@@ -146,7 +151,7 @@ class Run:
         text = (f"PRODUCT PROFILE (JSON)\n{json.dumps(self.profile, ensure_ascii=False)}\n\n"
                 f"REGULATION: {batch[0]['regulation']}   SECTION: {batch[0]['unit']}\n"
                 f"PARAGRAPHS (JSON, {len(items)}):\n{json.dumps(items, ensure_ascii=False)}\n\n"
-                + (SECOND_LOOK if self.second_look else "") + "Answer for every key.")
+                + (SECOND_LOOK + SECOND_LOOK_SKIPPED_NOTE if self.second_look else "") + "Answer for every key.")
         raw, _ = call_json(config.SCREEN_MODEL, "extract_system.md", [{"type": "text", "text": text}],
                            EXTRACT_SCHEMA, label=f"{'second_look' if self.second_look else 'extract'}:{batch[0]['regulation']}:{batch[0]['unit']}",
                            max_tokens=12000)
@@ -223,16 +228,30 @@ def extract_case(case_id: str, out_dir: Path | None = None, only: set[str] | Non
         results = list(pool.map(run.run_batch, batches))
     answers = {k: v for res in results for k, v in res.items()}
 
-    # second look: paragraphs that applied, contain obligation words, and still have no requirement (one more ask)
-    again = [c for c in candidates if answers[c["id"]].get("applies") and not answers[c["id"]].get("requirements")
-             and by_id[c["id"]]["has_obligation"]]
+    # second look: paragraphs that applied but gave no requirement, and (SECOND_LOOK_SKIPPED) paragraphs first judged
+    # "no" with less than high confidence; both need obligation words. Batches never mix regulations or sections.
+    def wants_again(c: dict) -> bool:
+        a, r = answers[c["id"]], by_id[c["id"]]
+        if a.get("status", "answered") != "answered" or a.get("requirements") or not r["has_obligation"]:
+            return False
+        if a.get("applies"):
+            return True
+        if config.SECOND_LOOK_SKIPPED_REGS and c["regulation"] not in config.SECOND_LOOK_SKIPPED_REGS:
+            return False
+        return config.SECOND_LOOK_SKIPPED and CONF_RANK.get(a.get("confidence"), 0) <= CONF_RANK[config.SECOND_LOOK_SKIPPED_MAX_CONF]
+    again = [c for c in candidates if wants_again(c)]
     second = Run(profile, by_id, tables, second_look=True)
     gained = set()
-    for items in (again[i:i + BATCH_MAX] for i in range(0, len(again), BATCH_MAX)):
-        for cid, a in second.run_batch(items).items():
-            if a.get("requirements"):
-                answers[cid] = {**a, "second_look": True}
-                gained.add(cid)
+    groups: dict[tuple, list[dict]] = {}
+    for c in again:
+        groups.setdefault((c["regulation"], c["unit"]), []).append(c)
+    second_batches = [b for items in groups.values() for b in make_batches(items, lambda it: len(by_id[it["id"]]["text"]))]
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        for res in pool.map(second.run_batch, second_batches):
+            for cid, a in res.items():
+                if a.get("requirements"):
+                    answers[cid] = {**a, "second_look": True}
+                    gained.add(cid)
     run.log.update({"second_look_asked": len(again), "second_look_gained": len(gained)})
 
     rows = []

@@ -8,6 +8,7 @@ You get, for each regulation: its name, title, the version label that will be ci
 - One newer regulation may consolidate several older ones; give one pair per older regulation.
 - Flag only pairs you are reasonably sure about. Two regulations that merely both mention a common word, or that cover different devices that happen to be fitted together, are not an overlap. A regulation that covers a part another regulation only refers to (a component built into the device, an electronic part) is not an overlap.
 - A regulation that covers something the newer one does not cover is not fully overlapped: flag it only if the part that overlaps is what the product needs, and say what is not covered in shared_scope.
+- Be conservative: a pair is applied only with confidence high, which needs explicit scope text showing that the newer regulation covers the same devices and replaces the older one for them. Marking of a physical device (a lamp) is independent of marking of a module or part built into it; do not treat these as one overlap. If part of the older regulation's obligations stays independent, use medium or low.
 
 ## Fields per pair
 - newer, older: regulation names exactly as given.
